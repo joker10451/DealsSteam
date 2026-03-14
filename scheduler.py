@@ -25,7 +25,7 @@ from enricher import get_steam_rating
 from igdb import get_game_info
 from hidden_gems import find_hidden_gems
 from publisher import (
-    publish_single, notify_wishlist_users, send_price_game,
+    publish_single, notify_wishlist_users, notify_users, send_price_game,
     notify_admin, send_with_retry, get_daily_theme, esc, get_bot,
 )
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -166,18 +166,32 @@ async def post_weekly_digest():
     for i, row in enumerate(top_discount, 1):
         emoji = store_emoji.get(row["store"], "🕹")
         link = row.get("link") or ""
-        # Фолбэк: строим ссылку для Steam если link не сохранён
-        if not link and row["store"] == "Steam" and row["deal_id"].startswith("steam_"):
-            appid = row["deal_id"].replace("steam_", "")
-            link = f"https://store.steampowered.com/app/{appid}/"
+        # Фолбэк: строим ссылку если link не сохранён
+        if not link:
+            if row["store"] == "Steam" and row["deal_id"].startswith("steam_"):
+                appid = row["deal_id"].replace("steam_", "")
+                link = f"https://store.steampowered.com/app/{appid}/"
+            elif row["store"] == "GOG" and row["deal_id"].startswith("gog_"):
+                slug = row["deal_id"].replace("gog_", "")
+                link = f"https://www.gog.com/ru/game/{slug}"
+            elif row["store"] == "Epic Games" and row["deal_id"].startswith("epic_"):
+                link = "https://store.epicgames.com/ru/free-games"
         title_part = f"<a href='{link}'>{esc(row['title'])}</a>" if link else esc(row["title"])
-        lines.append(f"{i}. {emoji} {title_part} — <code>-{row['discount']}%</code>")
+        lines.append(f"{i}. {emoji} {title_part} — <code>-{row['discount']}%</code> <i>({esc(row['store'])})</i>")
 
     if top_voted:
         lines += ["", "🔥 <b>Топ по голосам подписчиков:</b>"]
         for i, row in enumerate(top_voted, 1):
             emoji = store_emoji.get(row["store"], "🕹")
-            lines.append(f"{i}. {emoji} {esc(row['title'])} — {row['fire_count']} 🔥")
+            link = row.get("link") or ""
+            if not link:
+                if row["store"] == "Steam" and row["deal_id"].startswith("steam_"):
+                    appid = row["deal_id"].replace("steam_", "")
+                    link = f"https://store.steampowered.com/app/{appid}/"
+                elif row["store"] == "GOG" and row["deal_id"].startswith("gog_"):
+                    link = f"https://www.gog.com/ru/game/{row['deal_id'].replace('gog_', '')}"
+            title_part = f"<a href='{link}'>{esc(row['title'])}</a>" if link else esc(row["title"])
+            lines.append(f"{i}. {emoji} {title_part} — {row['fire_count']} 🔥")
 
     lines += ["", "━" * 20, "👾 Следи за каналом — новые скидки каждый день!"]
 
@@ -190,7 +204,9 @@ async def post_weekly_digest():
 
 
 async def post_hidden_gems():
-    gems = await find_hidden_gems(min_discount=70, min_score=85, max_reviews=500, limit=2)
+    gems = await find_hidden_gems(min_discount=50, min_score=80, max_reviews=1000, limit=2)
+    if not gems:
+        gems = await find_hidden_gems(min_discount=40, min_score=75, max_reviews=2000, limit=2)
     if not gems:
         log.info("Скрытые жемчужины: ничего не найдено.")
         return
@@ -223,7 +239,7 @@ async def post_hidden_gems():
             await send_with_retry(lambda: get_bot().send_photo(
                 CHANNEL_ID, photo=gem.image_url, caption=text, reply_markup=keyboard
             ))
-            await mark_as_posted(f"gem_{gem.appid}", gem.title, "Steam", gem.discount)
+            await mark_as_posted(f"gem_{gem.appid}", gem.title, "Steam", gem.discount, gem.link)
             log.info(f"Скрытая жемчужина опубликована: {gem.title}")
         except Exception as e:
             log.error(f"Ошибка публикации жемчужины {gem.title}: {e}")
@@ -271,42 +287,11 @@ async def notify_genre_subscribers(deal):
     if not user_ids:
         return
 
-    from publisher import get_bot
-    from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
-    from database import wishlist_remove_user, increment_metric
-
-    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(deal.store, "🕹")
+    from database import increment_metric
     genres_str = ", ".join(f"#{g.lower().replace(' ', '_')}" for g in deal.genres[:3])
-    price_line = "🆓 <b>БЕСПЛАТНО</b>" if deal.is_free else (
-        f"<s>{esc(deal.old_price)}</s> → <b>{esc(deal.new_price)}</b> <code>-{deal.discount}%</code>"
-    )
-    text = (
-        f"🎯 <b>Скидка по твоей подписке на жанр!</b>\n\n"
-        f"{store_emoji} <b>{esc(deal.title)}</b>\n"
-        f"{price_line}\n"
-        f"🏷 {genres_str}\n\n"
-        f"<a href='{deal.link}'>Открыть в {esc(deal.store)}</a>"
-    )
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"🛒 {deal.store}", url=deal.link)]
-    ])
-
-    for user_id in user_ids:
-        try:
-            await get_bot().send_message(user_id, text, reply_markup=keyboard)
-            await increment_metric("genre_notify")
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-            try:
-                await get_bot().send_message(user_id, text, reply_markup=keyboard)
-            except Exception:
-                pass
-        except TelegramForbiddenError:
-            await wishlist_remove_user(user_id)
-        except Exception as e:
-            log.warning(f"Жанр-уведомление не отправлено user_id={user_id}: {e}")
-        await asyncio.sleep(0.05)
+    header = f"🎯 <b>Скидка по твоей подписке на жанр!</b>\n🏷 {genres_str}"
+    await notify_users(user_ids, deal, header)
+    await increment_metric("genre_notify", len(user_ids))
 
 
 async def get_top_deals_now(limit: int = 5) -> list:

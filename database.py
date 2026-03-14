@@ -193,12 +193,12 @@ async def get_votes(deal_id: str) -> dict:
 async def get_top_voted(limit: int = 5) -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch("""
-        SELECT v.deal_id, p.title, p.store, COUNT(*) as fire_count
+        SELECT v.deal_id, p.title, p.store, p.link, COUNT(*) as fire_count
         FROM votes v
         JOIN posted_deals p ON p.deal_id = v.deal_id
         WHERE v.vote = 'fire'
           AND v.voted_at >= NOW() - INTERVAL '7 days'
-        GROUP BY v.deal_id, p.title, p.store
+        GROUP BY v.deal_id, p.title, p.store, p.link
         ORDER BY fire_count DESC
         LIMIT $1
     """, limit)

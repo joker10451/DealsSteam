@@ -131,7 +131,7 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
     else:
         lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
 
-    lines.append(f"\n{store_emoji} <b>{esc(deal.title)}</b>")
+    lines.append(f"\n{store_emoji} <b>{esc(deal.title)}</b>  <i>· {esc(deal.store)}</i>")
     lines.append("━━━━━━━━━━━━━━")
 
     if deal.is_free:
@@ -219,18 +219,16 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
         return False
 
 
-async def notify_wishlist_users(deal):
-    user_ids = await get_wishlist_matches(deal.title)
-    if not user_ids:
-        return
-
+async def notify_users(user_ids: list[int], deal, header: str):
+    """Отправляет уведомление о скидке списку пользователей."""
     store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(deal.store, "🕹")
     price_line = "🆓 <b>БЕСПЛАТНО</b>" if deal.is_free else (
-        f"❌ <s>{esc(deal.old_price)}</s> ✅ <b>{esc(deal.new_price)}</b> <code>-{deal.discount}%</code>"
+        f"<s>{esc(deal.old_price)}</s> → <b>{esc(deal.new_price)}</b> <code>-{deal.discount}%</code>"
     )
     text = (
-        f"🔔 <b>Скидка на игру из твоего вишлиста!</b>\n\n"
+        f"{header}\n\n"
         f"{store_emoji} <b>{esc(deal.title)}</b>\n"
+        f"🏪 {esc(deal.store)}\n"
         f"{price_line}\n\n"
         f"<a href='{deal.link}'>Открыть в {esc(deal.store)}</a>"
     )
@@ -241,22 +239,26 @@ async def notify_wishlist_users(deal):
     for user_id in user_ids:
         try:
             await get_bot().send_message(user_id, text, reply_markup=keyboard)
-            log.info(f"Wishlist уведомление отправлено user_id={user_id} для '{deal.title}'")
-            await increment_metric("wishlist_notify")
         except TelegramRetryAfter as e:
-            log.warning(f"Flood control, ждём {e.retry_after}s для user_id={user_id}")
             await asyncio.sleep(e.retry_after)
             try:
                 await get_bot().send_message(user_id, text, reply_markup=keyboard)
-                await increment_metric("wishlist_notify")
             except Exception as retry_err:
                 log.warning(f"Повторная попытка не удалась user_id={user_id}: {retry_err}")
         except TelegramForbiddenError:
-            log.info(f"Пользователь заблокировал бота user_id={user_id}, удаляем из вишлиста")
+            log.info(f"Пользователь заблокировал бота user_id={user_id}, удаляем")
             await wishlist_remove_user(user_id)
         except Exception as e:
             log.warning(f"Не удалось отправить уведомление user_id={user_id}: {e}")
         await asyncio.sleep(0.05)
+
+
+async def notify_wishlist_users(deal):
+    user_ids = await get_wishlist_matches(deal.title)
+    if not user_ids:
+        return
+    await notify_users(user_ids, deal, "🔔 <b>Скидка на игру из твоего вишлиста!</b>")
+    await increment_metric("wishlist_notify", len(user_ids))
 
 
 async def send_price_game(deal) -> None:

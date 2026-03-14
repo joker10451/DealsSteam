@@ -147,7 +147,7 @@ def _make_epic_json(title="Free Epic Game", game_id="epic123",
 async def test_steam_valid_html_returns_deals():
     """Req 1.1: valid HTML → Deal list with correct fields."""
     html = _make_steam_html(appid="12345", title="Cool Game", discount=75)
-    with patch("parsers.steam._fetch_with_retry", new_callable=AsyncMock, return_value=html):
+    with patch("parsers.steam.fetch_with_retry", new_callable=AsyncMock, return_value=html):
         deals = await get_steam_deals(min_discount=50)
 
     assert len(deals) == 1
@@ -164,7 +164,7 @@ async def test_steam_valid_html_returns_deals():
 @pytest.mark.asyncio
 async def test_steam_empty_html_returns_empty_list():
     """Req 1.2: HTML with no discount rows → []."""
-    with patch("parsers.steam._fetch_with_retry", new_callable=AsyncMock, return_value="<html></html>"):
+    with patch("parsers.steam.fetch_with_retry", new_callable=AsyncMock, return_value="<html></html>"):
         deals = await get_steam_deals(min_discount=50)
     assert deals == []
 
@@ -172,7 +172,7 @@ async def test_steam_empty_html_returns_empty_list():
 @pytest.mark.asyncio
 async def test_steam_none_response_returns_empty_list():
     """Req 1.8: None response → []."""
-    with patch("parsers.steam._fetch_with_retry", new_callable=AsyncMock, return_value=None):
+    with patch("parsers.steam.fetch_with_retry", new_callable=AsyncMock, return_value=None):
         deals = await get_steam_deals(min_discount=50)
     assert deals == []
 
@@ -184,7 +184,7 @@ async def test_steam_discount_filter():
         {"appid": "1", "title": "High Discount", "discount": 80},
         {"appid": "2", "title": "Low Discount", "discount": 55},
     ])
-    with patch("parsers.steam._fetch_with_retry", new_callable=AsyncMock, return_value=html):
+    with patch("parsers.steam.fetch_with_retry", new_callable=AsyncMock, return_value=html):
         deals = await get_steam_deals(min_discount=70)
 
     assert all(d.discount >= 70 for d in deals)
@@ -197,7 +197,7 @@ async def test_steam_discount_filter():
 async def test_steam_skips_non_game_item_type():
     """Req 1.4: data-ds-itemtype != '1' is skipped."""
     html = _make_steam_html(appid="99", title="Some DLC Content", discount=80, item_type="2")
-    with patch("parsers.steam._fetch_with_retry", new_callable=AsyncMock, return_value=html):
+    with patch("parsers.steam.fetch_with_retry", new_callable=AsyncMock, return_value=html):
         deals = await get_steam_deals(min_discount=50)
     assert deals == []
 
@@ -210,7 +210,7 @@ async def test_steam_skips_dlc_ost_by_title():
         {"appid": "2", "title": "Game OST", "discount": 80},
         {"appid": "3", "title": "Normal Game", "discount": 80},
     ])
-    with patch("parsers.steam._fetch_with_retry", new_callable=AsyncMock, return_value=html):
+    with patch("parsers.steam.fetch_with_retry", new_callable=AsyncMock, return_value=html):
         deals = await get_steam_deals(min_discount=50)
 
     titles = [d.title for d in deals]
@@ -226,7 +226,7 @@ async def test_steam_skips_dlc_ost_by_title():
 async def test_gog_valid_json_returns_deals():
     """Req 1.5: GOG parser returns Deal with store=='GOG' and deal_id starting with 'gog_'."""
     data = _make_gog_json(slug="witcher-3", title="The Witcher 3", discount="75%")
-    with patch("parsers.gog._fetch_with_retry", new_callable=AsyncMock, return_value=data):
+    with patch("parsers.gog.fetch_with_retry", new_callable=AsyncMock, return_value=data):
         deals = await get_gog_deals(min_discount=50)
 
     assert len(deals) == 1
@@ -254,7 +254,7 @@ async def test_gog_deal_id_prefix():
             for i in range(3)
         ]
     }
-    with patch("parsers.gog._fetch_with_retry", new_callable=AsyncMock, return_value=data):
+    with patch("parsers.gog.fetch_with_retry", new_callable=AsyncMock, return_value=data):
         deals = await get_gog_deals(min_discount=50)
 
     assert len(deals) == 3
@@ -266,7 +266,7 @@ async def test_gog_deal_id_prefix():
 @pytest.mark.asyncio
 async def test_gog_none_response_returns_empty_list():
     """Req 1.8: None response → []."""
-    with patch("parsers.gog._fetch_with_retry", new_callable=AsyncMock, return_value=None):
+    with patch("parsers.gog.fetch_with_retry", new_callable=AsyncMock, return_value=None):
         deals = await get_gog_deals(min_discount=50)
     assert deals == []
 
@@ -279,7 +279,7 @@ async def test_gog_none_response_returns_empty_list():
 async def test_epic_free_game():
     """Req 1.6: Epic free game → is_free=True, discount=100."""
     data = _make_epic_json(title="Free Epic Game", discount_pct=100)
-    with patch("parsers.epic._fetch_with_retry", new_callable=AsyncMock, return_value=data):
+    with patch("parsers.epic.fetch_with_retry", new_callable=AsyncMock, return_value=data):
         deals = await get_epic_deals(min_discount=50)
 
     assert len(deals) == 1
@@ -293,7 +293,7 @@ async def test_epic_free_game():
 @pytest.mark.asyncio
 async def test_epic_none_response_returns_empty_list():
     """Req 1.8: None response → []."""
-    with patch("parsers.epic._fetch_with_retry", new_callable=AsyncMock, return_value=None):
+    with patch("parsers.epic.fetch_with_retry", new_callable=AsyncMock, return_value=None):
         deals = await get_epic_deals(min_discount=50)
     assert deals == []
 
@@ -321,7 +321,7 @@ async def test_epic_no_active_promotions_skipped():
             }
         }
     }
-    with patch("parsers.epic._fetch_with_retry", new_callable=AsyncMock, return_value=data):
+    with patch("parsers.epic.fetch_with_retry", new_callable=AsyncMock, return_value=data):
         deals = await get_epic_deals(min_discount=50)
     assert deals == []
 
@@ -354,7 +354,7 @@ def test_property1_steam_output_invariant(appid, title, discount):
     assume(not _is_junk(title))
 
     html = _make_steam_html(appid=appid, title=title, discount=discount)
-    with patch("parsers.steam._fetch_with_retry", new_callable=AsyncMock, return_value=html):
+    with patch("parsers.steam.fetch_with_retry", new_callable=AsyncMock, return_value=html):
         deals = asyncio.get_event_loop().run_until_complete(get_steam_deals(min_discount=1))
 
     for d in deals:
@@ -380,7 +380,7 @@ def test_property1_gog_output_invariant(slug, title, discount):
     """
     import asyncio
     data = _make_gog_json(slug=slug, title=title, discount=f"{discount}%")
-    with patch("parsers.gog._fetch_with_retry", new_callable=AsyncMock, return_value=data):
+    with patch("parsers.gog.fetch_with_retry", new_callable=AsyncMock, return_value=data):
         deals = asyncio.get_event_loop().run_until_complete(get_gog_deals(min_discount=1))
 
     for d in deals:
@@ -413,7 +413,7 @@ def test_property2_steam_discount_filter(min_discount, discounts):
         for i, d in enumerate(discounts)
     ]
     html = _make_steam_html_multi(items)
-    with patch("parsers.steam._fetch_with_retry", new_callable=AsyncMock, return_value=html):
+    with patch("parsers.steam.fetch_with_retry", new_callable=AsyncMock, return_value=html):
         deals = asyncio.get_event_loop().run_until_complete(get_steam_deals(min_discount=min_discount))
 
     for d in deals:
@@ -483,7 +483,7 @@ def test_property5_steam_error_resilience(raise_exc):
             raise ConnectionError("network error")
         return None
 
-    with patch("parsers.steam._fetch_with_retry", side_effect=_failing):
+    with patch("parsers.steam.fetch_with_retry", side_effect=_failing):
         result = asyncio.get_event_loop().run_until_complete(get_steam_deals(min_discount=50))
 
     assert result == []
@@ -503,7 +503,7 @@ def test_property5_gog_error_resilience(raise_exc):
             raise ConnectionError("network error")
         return None
 
-    with patch("parsers.gog._fetch_with_retry", side_effect=_failing):
+    with patch("parsers.gog.fetch_with_retry", side_effect=_failing):
         result = asyncio.get_event_loop().run_until_complete(get_gog_deals(min_discount=50))
 
     assert result == []
@@ -523,7 +523,7 @@ def test_property5_epic_error_resilience(raise_exc):
             raise ConnectionError("network error")
         return None
 
-    with patch("parsers.epic._fetch_with_retry", side_effect=_failing):
+    with patch("parsers.epic.fetch_with_retry", side_effect=_failing):
         result = asyncio.get_event_loop().run_until_complete(get_epic_deals(min_discount=50))
 
     assert result == []
@@ -562,7 +562,7 @@ def test_property6_gog_deal_id_prefix(slugs, discount):
             for slug in slugs
         ]
     }
-    with patch("parsers.gog._fetch_with_retry", new_callable=AsyncMock, return_value=data):
+    with patch("parsers.gog.fetch_with_retry", new_callable=AsyncMock, return_value=data):
         deals = asyncio.get_event_loop().run_until_complete(get_gog_deals(min_discount=1))
 
     for d in deals:

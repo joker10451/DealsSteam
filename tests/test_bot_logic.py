@@ -15,10 +15,9 @@ from hypothesis import strategies as st
 
 from parsers.steam import Deal, _is_junk, SKIP_KEYWORDS
 
-# bot.py при импорте создаёт Bot(token=...) — мокируем токен и aiogram.Bot
-os.environ.setdefault("BOT_TOKEN", "1234567890:AABBCCDDEEFFaabbccddeeff-1234567890A")
-with patch("aiogram.Bot.__init__", return_value=None):
-    from bot import get_daily_theme, deduplicate, theme_score, DAILY_THEMES
+# Импортируем функции из правильных модулей
+from publisher import get_daily_theme, DAILY_THEMES
+from scheduler import deduplicate, theme_score
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +47,7 @@ def test_get_daily_theme_monday():
     monday = datetime(2024, 1, 1)  # понедельник
     import pytz
     MSK = pytz.timezone("Europe/Moscow")
-    with patch("bot.datetime") as mock_dt:
+    with patch("publisher.datetime") as mock_dt:
         mock_dt.now.return_value = MSK.localize(monday)
         emoji, name, genres = get_daily_theme()
     assert emoji == "⚔️"
@@ -62,7 +61,7 @@ def test_get_daily_theme_all_days():
     MSK = pytz.timezone("Europe/Moscow")
     # 2024-01-01 = понедельник (weekday 0)
     for weekday in range(7):
-        with patch("bot.datetime") as mock_dt:
+        with patch("publisher.datetime") as mock_dt:
             from datetime import timedelta
             day = datetime(2024, 1, 1) + timedelta(days=weekday)
             mock_dt.now.return_value = MSK.localize(day)
