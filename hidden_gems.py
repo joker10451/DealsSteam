@@ -3,7 +3,7 @@
 Использует Steam Search API.
 """
 import re
-import aiohttp
+import asyncio
 from dataclasses import dataclass
 from typing import Optional
 from parsers.utils import fetch_with_retry
@@ -95,26 +95,33 @@ def _parse_discount(block: str) -> int:
 
 
 async def _get_app_details(appid: str) -> Optional[dict]:
-    url = f"https://store.steampowered.com/api/appdetails?appids={appid}&filters=price_overview,ratings&cc=ru"
+    # Цены
+    price_url = f"https://store.steampowered.com/api/appdetails?appids={appid}&filters=price_overview&cc=ru"
+    # Рейтинг — через appreviews endpoint (как в enricher.py)
+    reviews_url = f"https://store.steampowered.com/appreviews/{appid}?json=1&language=all&purchase_type=all"
     try:
-        data = await fetch_with_retry(url)
-        if not data:
-            return None
-        app = data.get(str(appid), {})
-        if not app.get("success"):
-            return None
-        d = app["data"]
-        price = d.get("price_overview", {})
-        ratings = d.get("ratings", {}).get("steam", {})
+        price_data, reviews_data = await asyncio.gather(
+            fetch_with_retry(price_url),
+            fetch_with_retry(reviews_url),
+        )
 
-        score = int(ratings.get("percent_positive", 0)) if ratings else 0
-        reviews = int(ratings.get("total", 0)) if ratings else 0
+        old_price, new_price = "", ""
+        if price_data:
+            app = price_data.get(str(appid), {})
+            if app.get("success"):
+                price = app["data"].get("price_overview", {})
+                old_price = price.get("initial_formatted", "")
+                new_price = price.get("final_formatted", "")
 
-        return {
-            "old_price": price.get("initial_formatted", ""),
-            "new_price": price.get("final_formatted", ""),
-            "score": score,
-            "reviews": reviews,
-        }
+        score, reviews = 0, 0
+        if reviews_data:
+            summary = reviews_data.get("query_summary", {})
+            total = int(summary.get("total_reviews", 0))
+            positive = int(summary.get("total_positive", 0))
+            if total >= 10:
+                score = int(positive / total * 100)
+                reviews = total
+
+        return {"old_price": old_price, "new_price": new_price, "score": score, "reviews": reviews}
     except Exception:
         return None

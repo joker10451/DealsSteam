@@ -21,8 +21,13 @@ async def init_db():
                 title TEXT,
                 store TEXT,
                 discount INTEGER DEFAULT 0,
+                link TEXT,
                 posted_at TIMESTAMPTZ DEFAULT NOW()
             )
+        """)
+        # Добавляем колонку link если её нет (миграция для существующих БД)
+        await conn.execute("""
+            ALTER TABLE posted_deals ADD COLUMN IF NOT EXISTS link TEXT
         """)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS wishlist (
@@ -75,11 +80,11 @@ async def is_already_posted(deal_id: str) -> bool:
     return row is not None
 
 
-async def mark_as_posted(deal_id: str, title: str, store: str, discount: int = 0):
+async def mark_as_posted(deal_id: str, title: str, store: str, discount: int = 0, link: str = ""):
     pool = await get_pool()
     await pool.execute(
-        "INSERT INTO posted_deals (deal_id, title, store, discount) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
-        deal_id, title, store, discount,
+        "INSERT INTO posted_deals (deal_id, title, store, discount, link) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+        deal_id, title, store, discount, link,
     )
 
 
@@ -97,7 +102,7 @@ async def cleanup_old_records() -> int:
 async def get_weekly_top(limit: int = 10) -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch("""
-        SELECT title, store, discount, deal_id
+        SELECT title, store, discount, deal_id, link
         FROM posted_deals
         WHERE posted_at >= NOW() - INTERVAL '7 days'
         ORDER BY discount DESC

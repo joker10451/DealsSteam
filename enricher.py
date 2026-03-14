@@ -107,17 +107,34 @@ async def get_historical_low(appid: str) -> Optional[dict]:
 
 def generate_comment(deal: Deal, rating: Optional[dict]) -> str:
     """Генерирует короткий комментарий на основе данных об игре."""
+    import random
     score = rating["score"] if rating else 0
     genres = deal.genres
 
-    # Шаблоны по рейтингу
     if deal.is_free:
-        return "Бесплатно — просто берём, не думаем."
+        return random.choice([
+            "Бесплатно — просто берём, не думаем.",
+            "Цена вопроса — ноль. Качаем.",
+            "Халява. Долго не думай.",
+            "Бесплатно сегодня — платно завтра. Успевай.",
+        ])
     if score >= 95:
+        if "Инди" in genres or "Indie" in genres:
+            return "Инди с культовым рейтингом. Такое бывает редко — брать."
+        if "RPG" in genres or "Ролевые" in genres:
+            return "Один из лучших RPG по мнению сообщества. Не проходи мимо."
         return "Один из лучших в жанре. Брать не раздумывая."
     if score >= 85:
+        if "Инди" in genres or "Indie" in genres:
+            return "Инди с высоким рейтингом — редкость. Брать."
+        if "Хоррор" in genres or "Horror" in genres:
+            return "Высокий рейтинг для хоррора — значит реально пугает. Бери."
+        if "Стратегия" in genres or "Strategy" in genres:
+            return "Сообщество стратегов довольно. Хороший выбор на вечер."
         return "Высокий рейтинг — сообщество довольно. Хороший выбор."
     if score >= 70:
+        if "Экшен" in genres or "Action" in genres:
+            return "Крепкий экшен. Фанатам жанра зайдёт."
         return "Крепкий середняк. Фанатам жанра зайдёт."
     if "RPG" in genres or "Ролевые" in genres:
         return "Для любителей RPG — стоит посмотреть."

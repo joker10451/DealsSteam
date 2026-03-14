@@ -123,12 +123,13 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
     new_price = await _localize_price(deal.new_price)
 
     lines = []
+    adult_prefix = "🔞 " if (igdb_info and igdb_info.get("is_adult")) else ""
     if deal.is_free:
-        lines.append(f"🎁 <b>БЕСПЛАТНО · {now}</b>")
+        lines.append(f"🎁 <b>{adult_prefix}БЕСПЛАТНО · {now}</b>")
     elif is_historic:
-        lines.append(f"⚡️ <b>ИСТОРИЧЕСКИЙ МИНИМУМ · {now}</b>")
+        lines.append(f"⚡️ <b>{adult_prefix}ИСТОРИЧЕСКИЙ МИНИМУМ · {now}</b>")
     else:
-        lines.append(f"{theme_emoji} <b>{theme_name.upper()} · {now}</b>")
+        lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
 
     lines.append(f"\n{store_emoji} <b>{esc(deal.title)}</b>")
     lines.append("━━━━━━━━━━━━━━")
@@ -145,9 +146,19 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
         score_line = f"⭐️ Steam: <b>{rating['score']}%</b>"
         if rating.get("label"):
             score_line += f"  ·  {esc(rating['label'])}"
+        if rating.get("total"):
+            score_line += f"  ·  {rating['total']:,} отзывов".replace(",", " ")
         lines.append(score_line)
     elif igdb_info and igdb_info.get("rating"):
         lines.append(f"⭐️ IGDB: <b>{igdb_info['rating']}/100</b>")
+
+    if historical_low and historical_low.get("price"):
+        low_rub = await to_rubles(float(historical_low["price"]), "USD")
+        if low_rub:
+            lines.append(f"📉 Истор. минимум: <b>{format_rub(low_rub)}</b>")
+
+    if igdb_info and igdb_info.get("description"):
+        lines.append(f"\n📖 <i>{esc(igdb_info['description'])}</i>")
 
     comment = generate_comment(deal, rating)
     lines.append(f"\n📝 <i>{esc(comment)}</i>")
@@ -156,6 +167,10 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
     if hashtags:
         lines.append(f"\n{hashtags}")
 
+    if igdb_info and igdb_info.get("similar_games"):
+        similar = ", ".join(igdb_info["similar_games"])
+        lines.append(f"🔗 Похожие: <i>{esc(similar)}</i>")
+
     text = "\n".join(lines)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -163,6 +178,7 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
         [
             InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{_cb_id(deal.deal_id)}"),
             InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{_cb_id(deal.deal_id)}"),
+            InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"),
         ],
     ])
 

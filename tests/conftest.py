@@ -23,16 +23,19 @@ TEST_PREFIX = "test_pytest_"
 @pytest.fixture(scope="session", autouse=True)
 async def reset_db_pool():
     """Сбрасывает глобальный пул database._pool перед сессией и закрывает его после.
-
-    Это нужно чтобы asyncpg pool создавался в правильном event loop сессии.
+    После всех тестов удаляет все тестовые записи из продакшн БД.
     """
     import database
-    # Сбрасываем пул — он будет создан заново при первом обращении
     database._pool = None
     yield
-    # Закрываем пул после всех тестов
+    # Финальная очистка всех тестовых записей
     if database._pool is not None:
-        await database._pool.close()
+        pool = database._pool
+        await pool.execute("DELETE FROM posted_deals WHERE deal_id LIKE 'test_%'")
+        await pool.execute("DELETE FROM votes WHERE deal_id LIKE 'test_%'")
+        await pool.execute("DELETE FROM price_game WHERE deal_id LIKE 'test_%'")
+        await pool.execute("DELETE FROM wishlist WHERE user_id >= 9000000000")
+        await pool.close()
         database._pool = None
 
 

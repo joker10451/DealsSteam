@@ -11,6 +11,7 @@ from config import IGDB_CLIENT_ID, IGDB_CLIENT_SECRET
 
 TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 IGDB_URL = "https://api.igdb.com/v4/games"
+MYMEMORY_URL = "https://api.mymemory.translated.net/get"
 
 # Кэш токена — живёт ~60 дней
 _token: Optional[str] = None
@@ -19,6 +20,26 @@ _token_expires: float = 0
 # Кэш результатов запросов: {title_lower: (result, expires_at)}
 _game_cache: dict[str, tuple] = {}
 _GAME_CACHE_TTL = 24 * 3600  # 24 часа
+
+
+async def _translate_to_ru(text: str) -> str:
+    """Переводит текст на русский через MyMemory API (бесплатно, без ключа)."""
+    if not text:
+        return text
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                MYMEMORY_URL,
+                params={"q": text, "langpair": "en|ru"},
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as r:
+                if r.status != 200:
+                    return text
+                data = await r.json(content_type=None)
+                translated = data.get("responseData", {}).get("translatedText", "")
+                return translated if translated else text
+    except Exception:
+        return text
 
 
 async def _get_token() -> Optional[str]:
@@ -76,7 +97,8 @@ async def get_game_info(title: str) -> Optional[dict]:
         f'search "{title}"; '
         f'fields name, summary, rating, cover.url, '
         f'screenshots.url, genres.name, hypes, '
-        f'aggregated_rating, total_rating, age_ratings.rating, id; '
+        f'aggregated_rating, total_rating, age_ratings.rating, id, '
+        f'similar_games.name; '
         f'where version_parent = null; '
         f'limit 1;'
     )
@@ -95,10 +117,11 @@ async def get_game_info(title: str) -> Optional[dict]:
 
     game = results[0]
 
-    # Описание — первые 2 предложения
+    # Описание — первые 2 предложения, переводим на русский
     summary = game.get("summary", "")
     sentences = [s.strip() for s in summary.split(".") if len(s.strip()) > 15]
-    description = ". ".join(sentences[:2]) + "." if sentences else None
+    description_en = ". ".join(sentences[:2]) + "." if sentences else None
+    description = await _translate_to_ru(description_en) if description_en else None
 
     # Обложка — меняем размер на большой
     cover_url = None
@@ -126,6 +149,9 @@ async def get_game_info(title: str) -> Optional[dict]:
     age_ratings = game.get("age_ratings", [])
     is_adult = any(r.get("rating") in (4, 6) for r in age_ratings)
 
+    # Похожие игры
+    similar = [g["name"] for g in game.get("similar_games", [])[:3]]
+
     result = {
         "description": description,
         "rating": rating,
@@ -134,6 +160,7 @@ async def get_game_info(title: str) -> Optional[dict]:
         "genres": genres,
         "igdb_id": game.get("id"),
         "is_adult": is_adult,
+        "similar_games": similar,
     }
     _game_cache[cache_key] = (result, time.time() + _GAME_CACHE_TTL)
     return result

@@ -136,7 +136,7 @@ async def check_and_post() -> Optional[str]:
         published = await publish_single(deal, prefetched_rating=rating_cache.get(deal.deal_id))
         if published:
             post_time = datetime.now(MSK).isoformat()
-            await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount)
+            await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount, deal.link)
             await notify_wishlist_users(deal)
             await notify_genre_subscribers(deal)
             if not deal.is_free:
@@ -146,8 +146,7 @@ async def check_and_post() -> Optional[str]:
                 log.info(f"БД: удалено {deleted} старых записей")
             return post_time
         else:
-            # Помечаем как опубликованное чтобы не пытаться снова
-            await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount)
+            await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount, deal.link)
 
     log.warning("Не удалось опубликовать ни одну сделку из топ-5")
     return None
@@ -166,8 +165,9 @@ async def post_weekly_digest():
     lines = [f"📅 <b>ЛУЧШИЕ СКИДКИ НЕДЕЛИ — {now}</b>", "", "🏷 <b>Топ по скидке:</b>"]
     for i, row in enumerate(top_discount, 1):
         emoji = store_emoji.get(row["store"], "🕹")
-        link = ""
-        if row["store"] == "Steam" and row["deal_id"].startswith("steam_"):
+        link = row.get("link") or ""
+        # Фолбэк: строим ссылку для Steam если link не сохранён
+        if not link and row["store"] == "Steam" and row["deal_id"].startswith("steam_"):
             appid = row["deal_id"].replace("steam_", "")
             link = f"https://store.steampowered.com/app/{appid}/"
         title_part = f"<a href='{link}'>{esc(row['title'])}</a>" if link else esc(row["title"])

@@ -149,6 +149,18 @@ async def cb_wishlist_done(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("wl_add:"))
+async def cb_wishlist_add_from_post(callback: CallbackQuery):
+    title = callback.data.split(":", 1)[1].strip()
+    added = await wishlist_add(callback.from_user.id, title)
+    if added is None:
+        await callback.answer("❌ Вишлист полон (макс. 20 игр)", show_alert=True)
+    elif added:
+        await callback.answer(f"✅ «{title}» добавлено в вишлист", show_alert=True)
+    else:
+        await callback.answer("Уже есть в вишлисте", show_alert=True)
+
+
 @router.message(Command("genre"))
 async def cmd_genre(message: Message):
     args = message.text.split(maxsplit=1)
