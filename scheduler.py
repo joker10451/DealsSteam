@@ -115,22 +115,24 @@ async def check_and_post() -> Optional[str]:
         log.info("Нет новых скидок для публикации.")
         return None
 
-    deal = combined[0]
-    published = await publish_single(deal, prefetched_rating=rating_cache.get(deal.deal_id))
-    if published:
-        post_time = datetime.now(MSK).isoformat()
-        await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount)
-        await notify_wishlist_users(deal)
-        if not deal.is_free:
-            await send_price_game(deal)
+    for deal in combined[:5]:  # пробуем до 5 кандидатов
+        published = await publish_single(deal, prefetched_rating=rating_cache.get(deal.deal_id))
+        if published:
+            post_time = datetime.now(MSK).isoformat()
+            await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount)
+            await notify_wishlist_users(deal)
+            if not deal.is_free:
+                await send_price_game(deal)
+            deleted = await cleanup_old_records()
+            if deleted:
+                log.info(f"БД: удалено {deleted} старых записей")
+            return post_time
+        else:
+            # Помечаем как опубликованное чтобы не пытаться снова
+            await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount)
 
-        deleted = await cleanup_old_records()
-        if deleted:
-            log.info(f"БД: удалено {deleted} старых записей")
-        return post_time
-
+    log.warning("Не удалось опубликовать ни одну сделку из топ-5")
     return None
-
 
 async def post_weekly_digest():
     top_discount = await get_weekly_top(limit=10)

@@ -42,6 +42,11 @@ def esc(text: str) -> str:
     return escape(str(text))
 
 
+def _cb_id(deal_id: str) -> str:
+    """Обрезает deal_id до 50 символов для callback_data (лимит Telegram 64 байта)."""
+    return deal_id[:50]
+
+
 DAILY_THEMES = {
     0: ("⚔️", "RPG-понедельник",  ["RPG", "Ролевые"]),
     1: ("💥", "Экшен-вторник",    ["Экшен", "Action", "Шутер"]),
@@ -156,8 +161,8 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"🛒 Открыть в {deal.store}", url=deal.link)],
         [
-            InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{deal.deal_id}"),
-            InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{deal.deal_id}"),
+            InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{_cb_id(deal.deal_id)}"),
+            InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{_cb_id(deal.deal_id)}"),
         ],
     ])
 
@@ -262,7 +267,7 @@ async def send_price_game(deal) -> None:
     await save_price_game(deal.deal_id, correct)
 
     buttons = [
-        InlineKeyboardButton(text=f"{p}₽", callback_data=f"pg:{deal.deal_id}:{p}")
+        InlineKeyboardButton(text=f"{p}₽", callback_data=f"pg:{_cb_id(deal.deal_id)}:{p}")
         for p in options
     ]
     rows = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
