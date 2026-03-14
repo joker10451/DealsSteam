@@ -59,7 +59,7 @@ async def add_score(user_id: int, points: int, correct: bool = True, reason: str
     pool = await get_pool()
     async with pool.acquire() as conn:
         # Rate limit: не более 1 начисления в секунду с одной причиной
-        if reason == "game":
+        if reason in ("game", "screenshot", "price_game"):
             last = await conn.fetchval("""
                 SELECT earned_at FROM user_score_history
                 WHERE user_id = $1 AND reason = $2
@@ -240,7 +240,7 @@ async def check_screenshot_answer(user_id: int, game_id: str, answer: str) -> di
     
     # Начисляем баллы и проверяем достижения
     points = 10 if is_correct else 0
-    new_achievements = await add_score(user_id, points, is_correct)
+    new_achievements = await add_score(user_id, points, is_correct, reason="screenshot")
     
     # Увеличиваем счётчик правильных ответов для достижений
     if is_correct:
@@ -345,7 +345,7 @@ async def complete_daily_challenge(user_id: int) -> dict:
             return {"error": "Ты уже выполнил челлендж сегодня!"}
     
     # Начисляем бонусные баллы и проверяем достижения
-    new_achievements = await add_score(user_id, 50, True)
+    new_achievements = await add_score(user_id, 50, True, reason="challenge")
     
     # Увеличиваем счётчик выполненных челленджей
     from achievements import increment_challenges_completed, check_and_unlock_achievements

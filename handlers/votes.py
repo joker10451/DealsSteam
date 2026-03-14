@@ -84,7 +84,7 @@ async def handle_price_game(callback: CallbackQuery):
     from minigames import add_score
     user_id = callback.from_user.id
     points = 5 if is_correct else 0
-    new_achievements = await add_score(user_id, points, is_correct)
+    new_achievements = await add_score(user_id, points, is_correct, reason="price_game")
     
     # Формируем ответ
     if is_correct:
