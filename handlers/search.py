@@ -226,29 +226,42 @@ async def cmd_stats(message: Message):
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     """Показать список всех команд."""
-    help_text = """
-🤖 <b>Команды бота GameDeals Radar</b>
-
-<b>Вишлист:</b>
-• Напиши название игры — добавлю в вишлист
-• /wishlist — посмотреть список (до 20 игр)
-• /remove [название] — удалить из вишлиста
-• /cancel — отменить добавление
-
-<b>Поиск скидок:</b>
-• /top — топ-5 скидок прямо сейчас
-• /find [тег] — найти по жанру (coop, rpg, horror...)
-• /price [ссылка или название] — цены по регионам Steam
-
-<b>Статистика:</b>
-• /stats — статистика канала за неделю
-
-<b>Помощь:</b>
-• /help — показать это сообщение
-
-📢 Канал: @ваш_канал
-💬 Вопросы: @Joker104_97
-"""
-    await message.answer(help_text)
+    help_text = (
+        "🤖 <b>Команды бота GameDeals Radar</b>\n\n"
+        "<b>Вишлист:</b>\n"
+        "• Напиши название игры — добавлю в вишлист\n"
+        "• /wishlist — посмотреть список (до 20 игр)\n"
+        "• /remove [название] — удалить из вишлиста\n"
+        "• /cancel — отменить добавление\n\n"
+        "<b>Поиск скидок:</b>\n"
+        "• /top — топ-5 скидок прямо сейчас\n"
+        "• /find [тег] — найти по жанру (coop, rpg, horror...)\n"
+        "• /price [ссылка или название] — цены по регионам Steam\n\n"
+        "<b>Уведомления:</b>\n"
+        "• /notify_settings — настройки уведомлений вишлиста\n"
+        "• /min_discount — мин. скидка для уведомлений\n"
+        "• /quiet_hours — тихие часы (не беспокоить)\n"
+        "• /freenotify — уведомления о бесплатных играх\n\n"
+        "<b>Мини-игры и баллы:</b>\n"
+        "• /games — мини-игры\n"
+        "• /score — мои баллы\n"
+        "• /leaderboard — таблица лидеров\n"
+        "• /challenge — челлендж дня\n"
+        "• /achievements — мои достижения\n\n"
+        "<b>Магазин:</b>\n"
+        "• /shop — магазин призов\n"
+        "• /buy [id] — купить приз\n"
+        "• /myrewards — мои призы\n\n"
+        "<b>Steam:</b>\n"
+        "• /steam — привязать аккаунт\n"
+        "• /steamsync — синхронизировать вишлист\n\n"
+        "<b>Прочее:</b>\n"
+        "• /invite — пригласить друга (+100 баллов)\n"
+        "• /profile — мой профиль\n"
+        "• /help — показать это сообщение\n\n"
+        "📢 Канал: <a href='https://t.me/GameDealsRadarRu'>@GameDealsRadarRu</a>\n"
+        "💬 Вопросы: @Joker104_97"
+    )
+    await message.answer(help_text, disable_web_page_preview=True)
 
 

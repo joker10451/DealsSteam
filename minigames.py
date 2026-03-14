@@ -295,7 +295,6 @@ async def get_daily_challenge() -> Optional[dict]:
             }
     
     return None
-    return None
 
 
 async def create_daily_challenge(challenge_type: str, data: dict):

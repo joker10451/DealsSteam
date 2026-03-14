@@ -52,8 +52,20 @@ async def handle_vote(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("pg:"))
 async def handle_price_game(callback: CallbackQuery):
     parts = callback.data.split(":")
+    if len(parts) < 3:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
     deal_id = parts[1]
-    chosen = int(parts[2])
+    try:
+        chosen = int(parts[2])
+    except ValueError:
+        await callback.answer("Ошибка: неверная цена", show_alert=True)
+        return
+
+    if chosen <= 0 or chosen > 100_000:
+        await callback.answer("Ошибка: цена вне допустимого диапазона", show_alert=True)
+        return
 
     correct = await get_price_game(deal_id)
     if correct is None:

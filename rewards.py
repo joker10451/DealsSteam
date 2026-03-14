@@ -210,10 +210,8 @@ async def purchase_reward(user_id: int, reward_id: str) -> dict:
             SELECT total_score FROM user_scores WHERE user_id = $1
         """, user_id)
         
-        if not balance or balance < cost:
-            return {"error": f"Недостаточно баллов. Нужно: {cost}, у тебя: {balance or 0}"}
-        
-        # Проверяем, не куплен ли уже permanent приз
+        if balance is None or balance < cost:
+            return {"error": f"Недостаточно баллов. Нужно: {cost}, у тебя: {balance if balance is not None else 0}"}
         if reward["type"] == "permanent":
             existing = await conn.fetchval("""
                 SELECT 1 FROM user_rewards

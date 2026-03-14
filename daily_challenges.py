@@ -273,7 +273,7 @@ async def check_challenge_progress(user_id: int) -> Optional[dict]:
                 AND earned_at >= CURRENT_DATE
             """, user_id)
             
-            progress = min(100, int((today_score / target) * 100))
+            progress = min(100, int((today_score / target) * 100)) if target > 0 else 0
             
             return {
                 "completed": today_score >= target,
@@ -294,7 +294,7 @@ async def check_challenge_progress(user_id: int) -> Optional[dict]:
                 AND voted_at >= CURRENT_DATE
             """, user_id)
             
-            progress = min(100, int((votes_today / required) * 100))
+            progress = min(100, int((votes_today / required) * 100)) if required > 0 else 0
             
             return {
                 "completed": votes_today >= required,
