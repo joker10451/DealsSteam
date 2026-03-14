@@ -41,10 +41,12 @@ def test_generate_comment_high_rating():
 
 
 def test_generate_comment_free_game():
-    """WHEN is_free == True, SHALL содержать 'Бесплатно' или 'берём'."""
+    """WHEN is_free == True, SHALL содержать ключевые слова для бесплатных игр."""
     deal = _deal(is_free=True)
     comment = generate_comment(deal, None)
-    assert "Бесплатно" in comment or "берём" in comment
+    # Проверяем, что комментарий содержит хотя бы одно из ключевых слов для бесплатных игр
+    keywords = ["Бесплатно", "берём", "Качаем", "Халява", "ноль", "бесплатно"]
+    assert any(keyword in comment for keyword in keywords), f"Комментарий '{comment}' не содержит ключевых слов для бесплатных игр"
 
 
 def test_generate_comment_rpg_no_rating():

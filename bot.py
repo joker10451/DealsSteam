@@ -58,6 +58,11 @@ async def main():
         BotCommand(command="top", description="Топ скидок сейчас"),
         BotCommand(command="price", description="Цены по регионам Steam"),
         BotCommand(command="find", description="Найти скидки по тегу"),
+        BotCommand(command="games", description="Мини-игры"),
+        BotCommand(command="score", description="Мои баллы"),
+        BotCommand(command="leaderboard", description="Таблица лидеров"),
+        BotCommand(command="profile", description="Мой профиль"),
+        BotCommand(command="challenge", description="Челлендж дня"),
     ]
     # Команды для админа (включают всё)
     admin_commands = user_commands + [

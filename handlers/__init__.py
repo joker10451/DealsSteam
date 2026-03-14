@@ -1,4 +1,4 @@
-from . import wishlist, search, votes, admin
+from . import wishlist, search, votes, admin, games
 
 
 def register_all(dp):
@@ -6,3 +6,4 @@ def register_all(dp):
     dp.include_router(search.router)
     dp.include_router(votes.router)
     dp.include_router(admin.router)
+    dp.include_router(games.router)

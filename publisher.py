@@ -233,6 +233,13 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
 
         log.info(f"Опубликовано: {deal.title}")
         await increment_metric("published")
+        
+        # Случайно публикуем игру со скриншотом (20% шанс)
+        import random
+        if random.random() < 0.2 and igdb_info and igdb_info.get("screenshots"):
+            await asyncio.sleep(30)  # Подождём 30 секунд
+            await publish_screenshot_game(deal, igdb_info)
+        
         return True
     except Exception as e:
         log.error(f"Ошибка при отправке {deal.title}: {e}")
@@ -329,3 +336,47 @@ async def notify_admin(text: str):
             await get_bot().send_message(ADMIN_ID, f"⚠️ <b>GameDealsBot</b>\n\n{esc(text)}")
         except Exception:
             pass
+
+
+async def publish_screenshot_game(deal, igdb_info):
+    """Опубликовать мини-игру 'Угадай игру по скриншоту'."""
+    from minigames import create_screenshot_game
+    
+    game_data = await create_screenshot_game(deal)
+    if not game_data:
+        return
+    
+    screenshot_url = game_data["screenshot_url"]
+    options = game_data["options"]
+    game_id = game_data["game_id"]
+    
+    # Создаём кнопки с вариантами ответов
+    buttons = [
+        InlineKeyboardButton(
+            text=option,
+            callback_data=f"screenshot:{game_id}:{option}"
+        )
+        for option in options
+    ]
+    
+    # Размещаем кнопки по 2 в ряд
+    rows = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+    
+    caption = (
+        f"🎮 <b>Мини-игра: Угадай игру!</b>\n\n"
+        f"Что это за игра? 🤔\n"
+        f"Выбери правильный ответ 👇\n\n"
+        f"Награда: <b>+10 баллов</b> ⭐️"
+    )
+    
+    try:
+        await get_bot().send_photo(
+            CHANNEL_ID,
+            photo=screenshot_url,
+            caption=caption,
+            reply_markup=keyboard
+        )
+        log.info(f"Опубликована игра со скриншотом: {deal.title}")
+    except Exception as e:
+        log.warning(f"Игра со скриншотом не отправлена: {e}")

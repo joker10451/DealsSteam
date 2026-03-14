@@ -68,6 +68,10 @@ async def init_db():
         )
         await init_metrics_table(conn)
         await init_genre_table(conn)
+    
+    # Инициализация таблиц мини-игр
+    from minigames import init_minigames_db
+    await init_minigames_db()
 
 
 # --- posted_deals ---
