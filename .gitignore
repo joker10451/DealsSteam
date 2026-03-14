@@ -33,3 +33,9 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Hypothesis
+.hypothesis/
+
+# Pytest cache
+.pytest_cache/

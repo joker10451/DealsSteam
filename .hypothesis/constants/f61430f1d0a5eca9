@@ -1,4 +1,0 @@
-# file: E:\kiro\tg kanal skidki\game-deals-bot\config.py
-# hypothesis_version: 6.151.9
-
-['0', 'ADMIN_ID', 'BOT_TOKEN', 'CHANNEL_ID', 'DATABASE_URL', 'DB_PATH', 'IGDB_CLIENT_ID', 'IGDB_CLIENT_SECRET', 'data', 'data/deals.db', 'deals.db']

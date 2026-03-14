@@ -1,4 +1,0 @@
-# file: E:\kiro\tg kanal skidki\game-deals-bot\parsers\gog.py
-# hypothesis_version: 6.151.9
-
-[2.0, 100, 200, '$', '%', ',', '-', '.', '0%', 'EUR', 'GBP', 'GOG', 'KZT', 'PLN', 'SEK', 'UAH', 'USD', 'User-Agent', '[\\d\\s,.]+', 'base', 'coverHorizontal', 'discount', 'final', 'genres', 'kr', 'name', 'price', 'products', 'slug', 'storeLink', 'title', 'zł', '{formatter}', '£', 'Бесплатно', 'Неизвестная игра', 'руб', '—', '€', '₴', '₸', '₽']

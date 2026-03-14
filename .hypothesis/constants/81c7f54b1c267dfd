@@ -1,4 +1,0 @@
-# file: E:\kiro\tg kanal skidki\game-deals-bot\parsers\steam.py
-# hypothesis_version: 6.151.9
-
-[2.0, 200, ' - soundtrack', ' ost', ' pack', '%', '%d.%m.%Y', '-', '.discount_pct', '.search_tag', '.title', '0 ₽', '1', 'Accept-Language', 'Steam', 'User-Agent', 'a.search_result_row', 'art book', 'artbook', 'bonus content', 'data-ds-appid', 'data-ds-itemtype', 'digital extras', 'dlc', 'expansion pack', 'html.parser', 'img', 'pre-order', 'preorder', 'ru-RU,ru;q=0.9', 'season pass', 'src', 'supporter pack', 'upgrade', 'Бесплатно', 'Неизвестно', 'бесплатно', '—']
