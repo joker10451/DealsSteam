@@ -6,8 +6,24 @@
 """
 import aiohttp
 import asyncio
+import time
 from typing import Optional
 from parsers.steam import Deal
+
+# Простой TTL-кэш: {key: (value, expires_at)}
+_cache: dict[str, tuple] = {}
+_CACHE_TTL = 3600  # 1 час
+
+
+def _cache_get(key: str):
+    entry = _cache.get(key)
+    if entry and time.time() < entry[1]:
+        return entry[0]
+    return None
+
+
+def _cache_set(key: str, value, ttl: int = _CACHE_TTL):
+    _cache[key] = (value, time.time() + ttl)
 
 
 # --- Steam рейтинг ---
@@ -32,6 +48,10 @@ def rating_label(pct: int) -> str:
 
 async def get_steam_rating(appid: str) -> Optional[dict]:
     """Возвращает {'score': 85, 'total': 12000, 'label': '👍 Очень положительные'}"""
+    cached = _cache_get(f"rating:{appid}")
+    if cached is not None:
+        return cached
+
     url = STEAM_APPDETAILS_URL.format(appid=appid)
     try:
         async with aiohttp.ClientSession() as s:
@@ -45,7 +65,9 @@ async def get_steam_rating(appid: str) -> Optional[dict]:
         if total < 10:
             return None
         score = int(positive / total * 100)
-        return {"score": score, "total": total, "label": rating_label(score)}
+        result = {"score": score, "total": total, "label": rating_label(score)}
+        _cache_set(f"rating:{appid}", result)
+        return result
     except Exception:
         return None
 
@@ -57,6 +79,10 @@ CS_LOWEST_URL = "https://www.cheapshark.com/api/1.0/games?steamAppID={appid}"
 
 async def get_historical_low(appid: str) -> Optional[dict]:
     """Возвращает {'price': '4.99', 'is_current_low': True/False}"""
+    cached = _cache_get(f"histlow:{appid}")
+    if cached is not None:
+        return cached
+
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(CS_LOWEST_URL.format(appid=appid), timeout=aiohttp.ClientTimeout(total=10)) as r:
@@ -70,7 +96,9 @@ async def get_historical_low(appid: str) -> Optional[dict]:
         lowest_price = lowest.get("price")
         if not lowest_price:
             return None
-        return {"price": lowest_price}
+        result = {"price": lowest_price}
+        _cache_set(f"histlow:{appid}", result, ttl=6 * 3600)
+        return result
     except Exception:
         return None
 

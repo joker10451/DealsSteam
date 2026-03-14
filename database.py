@@ -51,6 +51,16 @@ async def init_db():
                 posted_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        # Индексы для ускорения частых запросов
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_wishlist_user_id ON wishlist(user_id)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_votes_deal_id ON votes(deal_id)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_posted_deals_posted_at ON posted_deals(posted_at)"
+        )
 
 
 # --- posted_deals ---
@@ -98,6 +108,12 @@ async def get_weekly_top(limit: int = 10) -> list[dict]:
 
 async def wishlist_add(user_id: int, query: str) -> bool:
     pool = await get_pool()
+    # Проверяем лимит
+    count = await pool.fetchval(
+        "SELECT COUNT(*) FROM wishlist WHERE user_id = $1", user_id
+    )
+    if count >= 20:
+        return None  # None = лимит превышен (отличается от False = уже есть)
     try:
         await pool.execute(
             "INSERT INTO wishlist (user_id, query) VALUES ($1, $2)",
@@ -128,13 +144,16 @@ async def wishlist_list(user_id: int) -> list[str]:
 
 async def get_wishlist_matches(title: str) -> list[int]:
     pool = await get_pool()
-    rows = await pool.fetch("SELECT user_id, query FROM wishlist")
     title_low = title.lower()
-    matched = set()
-    for r in rows:
-        if r["query"] in title_low or title_low in r["query"]:
-            matched.add(r["user_id"])
-    return list(matched)
+    rows = await pool.fetch(
+        """
+        SELECT DISTINCT user_id FROM wishlist
+        WHERE $1 ILIKE '%' || query || '%'
+           OR query ILIKE '%' || $1 || '%'
+        """,
+        title_low,
+    )
+    return [r["user_id"] for r in rows]
 
 
 # --- votes ---

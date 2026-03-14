@@ -2,9 +2,11 @@
 Скрытые жемчужины — инди-игры с высоким рейтингом, малым числом отзывов и большой скидкой.
 Использует Steam Search API.
 """
+import re
 import aiohttp
 from dataclasses import dataclass
 from typing import Optional
+from parsers.utils import fetch_with_retry
 
 
 @dataclass
@@ -37,17 +39,13 @@ async def find_hidden_gems(
         "json": 1,
         "tags": "492",          # тег Indie
         "specials": 1,          # только со скидкой
-        "sort_by": "Reviews_DESC",
+        "sort_by": "Discount_DESC",  # сортируем по скидке, не по отзывам
         "count": 50,
     }
 
     gems = []
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status != 200:
-                    return []
-                data = await r.json()
+        data = await fetch_with_retry(url, params=params)
     except Exception:
         return []
 
@@ -92,7 +90,6 @@ async def find_hidden_gems(
 
 
 def _parse_discount(block: str) -> int:
-    import re
     match = re.search(r"-(\d+)%", block)
     return int(match.group(1)) if match else 0
 
@@ -100,11 +97,9 @@ def _parse_discount(block: str) -> int:
 async def _get_app_details(appid: str) -> Optional[dict]:
     url = f"https://store.steampowered.com/api/appdetails?appids={appid}&filters=price_overview,ratings&cc=ru"
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=aiohttp.ClientTimeout(total=8)) as r:
-                if r.status != 200:
-                    return None
-                data = await r.json()
+        data = await fetch_with_retry(url)
+        if not data:
+            return None
         app = data.get(str(appid), {})
         if not app.get("success"):
             return None

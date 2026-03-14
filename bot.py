@@ -1,11 +1,16 @@
 import asyncio
 import logging
 import os
+import re
+import random
+import aiohttp
 from datetime import datetime
 from html import escape
+from typing import Optional
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from aiogram.types import (
     Message, InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton, CallbackQuery,
@@ -19,7 +24,7 @@ import pytz
 from config import (
     BOT_TOKEN, CHANNEL_ID, ADMIN_ID,
     MIN_DISCOUNT_PERCENT, MIN_STEAM_RATING,
-    POST_TIMES, TOP_DEALS_PER_POST,
+    POST_TIMES, TOP_DEALS_PER_POST, DATABASE_URL,
 )
 from database import (
     init_db, is_already_posted, mark_as_posted, cleanup_old_records,
@@ -29,6 +34,7 @@ from database import (
 from parsers.steam import get_steam_deals
 from parsers.gog import get_gog_deals
 from parsers.epic import get_epic_deals
+from parsers.utils import init_session, close_session
 from enricher import get_steam_rating, get_historical_low, generate_comment, genres_to_hashtags
 from igdb import get_game_info
 from collage import make_collage
@@ -106,7 +112,13 @@ async def cmd_start(message: Message):
         "/wishlist — посмотреть вишлист\n"
         "/remove [название] — удалить из вишлиста\n"
         "/price [ссылка или название] — цены по регионам Steam\n"
-        "/find [тег] — найти скидки по жанру (coop, rpg, horror...)",
+        "/find [тег] — найти скидки по жанру (coop, rpg, horror...)\n"
+        + (
+            "\n<b>Админ:</b>\n"
+            "/post — опубликовать скидки прямо сейчас\n"
+            "/gems — опубликовать скрытые жемчужины"
+            if message.from_user.id == ADMIN_ID else ""
+        ),
         reply_markup=main_keyboard(),
     )
 
@@ -154,7 +166,9 @@ async def handle_wishlist_add(message: Message):
     if len(query) < 2:
         return
     added = await wishlist_add(message.from_user.id, query)
-    if added:
+    if added is None:
+        await message.answer("❌ В вишлисте максимум 20 игр. Удали что-нибудь через /remove.")
+    elif added:
         await message.answer(
             f"✅ <b>{esc(query)}</b> добавлено в вишлист.\n"
             "Пришлю уведомление когда появится скидка.",
@@ -189,7 +203,7 @@ async def cmd_price(message: Message):
     if not appid:
         search_url = "https://store.steampowered.com/api/storesearch/"
         try:
-            async with __import__("aiohttp").ClientSession() as s:
+            async with aiohttp.ClientSession() as s:
                 async with s.get(search_url, params={"term": query, "cc": "ru", "l": "russian"}) as r:
                     data = await r.json()
             items = data.get("items", [])
@@ -268,8 +282,8 @@ async def cmd_find(message: Message):
     params = {"json": 1, "tags": tag_id, "specials": 1, "sort_by": "Discount_DESC", "count": 5}
 
     try:
-        async with __import__("aiohttp").ClientSession() as s:
-            async with s.get(url, params=params, timeout=__import__("aiohttp").ClientTimeout(total=10)) as r:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as r:
                 data = await r.json()
     except Exception as e:
         await wait_msg.edit_text(f"Ошибка запроса: {e}")
@@ -280,7 +294,6 @@ async def cmd_find(message: Message):
         await wait_msg.edit_text(f"Скидок по тегу «{esc(tag_query)}» сейчас нет.")
         return
 
-    import re
     lines = [f"🎮 <b>Скидки по тегу #{tag_query}:</b>\n"]
     buttons = []
 
@@ -296,6 +309,46 @@ async def cmd_find(message: Message):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await wait_msg.edit_text("\n".join(lines), reply_markup=keyboard)
+
+
+# ─── Ручная публикация (только для админа) ───────────────────────────────────
+
+@dp.message(Command("post"))
+async def cmd_post(message: Message):
+    """
+    /post — немедленно запускает сбор и публикацию скидок.
+    Доступно только администратору.
+    """
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    status_msg = await message.answer("🔄 Запускаю публикацию...")
+    try:
+        await check_and_post()
+        await status_msg.edit_text("✅ Готово.")
+    except Exception as e:
+        log.error(f"Ошибка ручной публикации: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
+
+
+@dp.message(Command("gems"))
+async def cmd_gems(message: Message):
+    """
+    /gems — немедленно публикует скрытые жемчужины.
+    Доступно только администратору.
+    """
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    status_msg = await message.answer("🔄 Ищу скрытые жемчужины...")
+    try:
+        await post_hidden_gems()
+        await status_msg.edit_text("✅ Готово.")
+    except Exception as e:
+        log.error(f"Ошибка ручной публикации жемчужин: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
 
 
 # ─── Голосование 🔥 / 💩 ─────────────────────────────────────────────────────
@@ -378,7 +431,6 @@ async def send_price_game(deal) -> None:
     if correct <= 0:
         return
 
-    import random
     # Генерируем 3 варианта-ловушки ± 10-40%
     variants = set()
     variants.add(correct)
@@ -411,11 +463,19 @@ async def send_price_game(deal) -> None:
 # ─── Retry при ошибках Telegram ──────────────────────────────────────────────
 
 async def send_with_retry(coro_fn, retries: int = 3, delay: float = 5.0):
-    """Выполняет корутину с повторными попытками при сетевых ошибках."""
+    """Выполняет корутину с повторными попытками при сетевых ошибках.
+    Не ретраит TelegramForbiddenError и TelegramRetryAfter (обрабатывает отдельно).
+    """
     last_exc = None
     for attempt in range(1, retries + 1):
         try:
             return await coro_fn()
+        except TelegramForbiddenError:
+            raise  # бот заблокирован — ретрай бессмысленен
+        except TelegramRetryAfter as e:
+            log.warning(f"Flood control от Telegram, ждём {e.retry_after}s")
+            await asyncio.sleep(e.retry_after)
+            last_exc = e
         except Exception as e:
             last_exc = e
             log.warning(f"Попытка {attempt}/{retries} не удалась: {e}")
@@ -426,7 +486,6 @@ async def send_with_retry(coro_fn, retries: int = 3, delay: float = 5.0):
 
 async def _localize_price(price_str: str) -> str:
     """Конвертирует цену вида '~250 EUR' в рубли. Остальное возвращает как есть."""
-    import re
     if not price_str or not price_str.startswith("~"):
         return price_str
     match = re.match(r"~([\d.]+)\s+([A-Z]+)", price_str)
@@ -439,21 +498,27 @@ async def _localize_price(price_str: str) -> str:
 
 # ─── Публикация одного поста ─────────────────────────────────────────────────
 
-async def publish_single(deal) -> bool:
+async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool:
     now = datetime.now(MSK).strftime("%d.%m.%Y")
     store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁", "CheapShark": "💰"}.get(deal.store, "🕹")
 
-    rating = None
+    rating = prefetched_rating
     historical_low = None
     igdb_info = None
 
     if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
         appid = deal.deal_id.replace("steam_", "")
-        rating, historical_low, igdb_info = await asyncio.gather(
-            get_steam_rating(appid),
-            get_historical_low(appid),
-            get_game_info(deal.title),
-        )
+        if rating is None:
+            rating, historical_low, igdb_info = await asyncio.gather(
+                get_steam_rating(appid),
+                get_historical_low(appid),
+                get_game_info(deal.title),
+            )
+        else:
+            historical_low, igdb_info = await asyncio.gather(
+                get_historical_low(appid),
+                get_game_info(deal.title),
+            )
     else:
         igdb_info = await get_game_info(deal.title)
 
@@ -572,9 +637,18 @@ async def notify_wishlist_users(deal):
         try:
             await bot.send_message(user_id, text, reply_markup=keyboard)
             log.info(f"Wishlist уведомление отправлено user_id={user_id} для '{deal.title}'")
+        except TelegramRetryAfter as e:
+            log.warning(f"Flood control, ждём {e.retry_after}s для user_id={user_id}")
+            await asyncio.sleep(e.retry_after)
+            try:
+                await bot.send_message(user_id, text, reply_markup=keyboard)
+            except Exception as retry_err:
+                log.warning(f"Повторная попытка не удалась user_id={user_id}: {retry_err}")
+        except TelegramForbiddenError:
+            log.info(f"Пользователь заблокировал бота user_id={user_id}, пропускаем")
         except Exception as e:
             log.warning(f"Не удалось отправить уведомление user_id={user_id}: {e}")
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
 
 # ─── Еженедельный дайджест ───────────────────────────────────────────────────
@@ -637,8 +711,18 @@ async def run_parser_tests():
         try:
             deals = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
             count = len(deals)
-            status = "✅" if count > 0 else "⚠️"
-            results.append(f"{status} {name}: {count} скидок")
+            if count == 0:
+                results.append(f"⚠️ {name}: 0 скидок")
+                continue
+            # Валидируем структуру первого Deal
+            bad = [
+                d.title for d in deals[:5]
+                if not d.deal_id or not d.title or not d.link or d.discount <= 0
+            ]
+            if bad:
+                results.append(f"⚠️ {name}: {count} скидок, битые записи: {bad}")
+            else:
+                results.append(f"✅ {name}: {count} скидок")
         except Exception as e:
             results.append(f"❌ {name}: {e}")
 
@@ -721,12 +805,14 @@ async def check_and_post():
         await notify_admin("\n".join(errors))
 
     filtered = []
+    rating_cache: dict[str, Optional[dict]] = {}
     for deal in all_deals:
         if await is_already_posted(deal.deal_id):
             continue
         if deal.store == "Steam" and MIN_STEAM_RATING > 0:
             appid = deal.deal_id.replace("steam_", "")
             rating = await get_steam_rating(appid)
+            rating_cache[deal.deal_id] = rating
             if rating and rating["score"] < MIN_STEAM_RATING:
                 log.info(f"Пропущено (рейтинг {rating['score']}%): {deal.title}")
                 continue
@@ -750,10 +836,10 @@ async def check_and_post():
         return
 
     deal = combined[0]
-    if await publish_single(deal):
+    published = await publish_single(deal, prefetched_rating=rating_cache.get(deal.deal_id))
+    if published:
         await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount)
         await notify_wishlist_users(deal)
-        # Мини-игра только для платных игр
         if not deal.is_free:
             await send_price_game(deal)
 
@@ -805,7 +891,21 @@ async def self_ping():
 # ─── Запуск ──────────────────────────────────────────────────────────────────
 
 async def main():
+    # Валидация обязательных настроек
+    errors = []
+    if not BOT_TOKEN:
+        errors.append("BOT_TOKEN не задан")
+    if not CHANNEL_ID:
+        errors.append("CHANNEL_ID не задан")
+    if not DATABASE_URL:
+        errors.append("DATABASE_URL не задан")
+    if errors:
+        for e in errors:
+            log.critical(f"Конфигурация: {e}")
+        raise SystemExit(1)
+
     await init_db()
+    await init_session()
 
     # Запускаем HTTP сервер чтобы Render не засыпал
     await start_web_server()
@@ -849,7 +949,10 @@ async def main():
     scheduler.start()
     log.info("Бот запущен.")
 
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await close_session()
 
 
 if __name__ == "__main__":

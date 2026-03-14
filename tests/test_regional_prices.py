@@ -42,8 +42,8 @@ def test_format_regional_prices_empty():
 def test_format_regional_prices_nonempty():
     """WHEN непустой список, SHALL содержать флаги регионов и 'Дешевле всего'."""
     results = [
-        {"flag": "🇷🇺", "country": "RU", "currency": "₽", "formatted": "499 ₽", "discount": 50, "final_cents": 49900},
-        {"flag": "🇹🇷", "country": "TR", "currency": "₺", "formatted": "29,99₺", "discount": 0, "final_cents": 2999},
+        {"flag": "🇷🇺", "country": "RU", "currency": "RUB", "formatted": "5 500 ₽", "discount": 0, "final_cents": None, "usd_equiv": 59.99, "estimated": True},
+        {"flag": "🇹🇷", "country": "TR", "currency": "TRY", "formatted": "29,99₺", "discount": 0, "final_cents": 2999, "usd_equiv": 0.95},
     ]
     text = format_regional_prices("Test Game", results)
     assert "🇷🇺" in text
@@ -54,10 +54,37 @@ def test_format_regional_prices_nonempty():
 def test_format_regional_prices_discount_display():
     """WHEN discount > 0, SHALL содержать '-N%'."""
     results = [
-        {"flag": "🇷🇺", "country": "RU", "currency": "₽", "formatted": "499 ₽", "discount": 75, "final_cents": 49900},
+        {"flag": "🇷🇺", "country": "RU", "currency": "RUB", "formatted": "499 ₽", "discount": 75, "final_cents": None, "usd_equiv": 5.50, "estimated": True},
     ]
     text = format_regional_prices("Test Game", results)
     assert "-75%" in text
+
+
+def test_format_regional_prices_usd_equiv():
+    """WHEN не-USD регион с usd_equiv, SHALL показывать ≈ $X.XX."""
+    results = [
+        {"flag": "🇹🇷", "country": "TR", "currency": "TRY", "formatted": "29,99₺", "discount": 0, "final_cents": 2999, "usd_equiv": 0.95},
+    ]
+    text = format_regional_prices("Test Game", results)
+    assert "≈ $" in text
+
+
+def test_format_regional_prices_usd_no_equiv():
+    """WHEN USD регион, SHALL не показывать ≈ $."""
+    results = [
+        {"flag": "🇺🇸", "country": "US", "currency": "USD", "formatted": "$59.99", "discount": 0, "final_cents": 5999, "usd_equiv": 59.99},
+    ]
+    text = format_regional_prices("Test Game", results)
+    assert "≈ $" not in text
+
+
+def test_format_regional_prices_estimated_label():
+    """WHEN estimated=True, SHALL содержать пометку '~расчётно'."""
+    results = [
+        {"flag": "🇷🇺", "country": "RU", "currency": "RUB", "formatted": "5 500 ₽", "discount": 0, "final_cents": None, "usd_equiv": 59.99, "estimated": True},
+    ]
+    text = format_regional_prices("Test Game", results)
+    assert "расчётно" in text
 
 
 # ---------------------------------------------------------------------------
@@ -67,10 +94,12 @@ def test_format_regional_prices_discount_display():
 _REGION = st.fixed_dictionaries({
     "flag": st.sampled_from(["🇷🇺", "🇹🇷", "🇦🇷", "🇰🇿", "🇺🇸"]),
     "country": st.sampled_from(["RU", "TR", "AR", "KZ", "US"]),
-    "currency": st.sampled_from(["₽", "₺", "ARS", "₸", "$"]),
+    "currency": st.sampled_from(["RUB", "TRY", "ARS", "KZT", "USD"]),
     "formatted": st.text(min_size=1, max_size=15),
     "discount": st.integers(min_value=0, max_value=100),
-    "final_cents": st.integers(min_value=1, max_value=10_000_000),
+    "final_cents": st.one_of(st.none(), st.integers(min_value=1, max_value=10_000_000)),
+    "usd_equiv": st.one_of(st.none(), st.floats(min_value=0.01, max_value=500.0, allow_nan=False)),
+    "estimated": st.booleans(),
 })
 
 
@@ -78,10 +107,12 @@ _REGION = st.fixed_dictionaries({
 @given(results=st.lists(_REGION, min_size=1, max_size=5))
 @settings(max_examples=20, deadline=None)
 def test_property_format_with_results(results):
-    """Property 16: непустой список → строка содержит флаг и 'Дешевле всего'."""
+    """Property 16: непустой список → строка содержит флаг; если есть usd_equiv — 'Дешевле всего'."""
     text = format_regional_prices("Game", results)
-    assert "Дешевле всего" in text
     assert any(r["flag"] in text for r in results)
+    has_usd = any(r["usd_equiv"] is not None for r in results)
+    if has_usd:
+        assert "Дешевле всего" in text
 
 
 # Feature: bot-tests-and-docs, Property 17: format_regional_prices discount display
@@ -93,8 +124,9 @@ def test_property_format_with_results(results):
 def test_property_discount_display(discount, other_results):
     """Property 17: если discount > 0, строка содержит '-N%'."""
     results = [{
-        "flag": "🇷🇺", "country": "RU", "currency": "₽",
-        "formatted": "499 ₽", "discount": discount, "final_cents": 49900,
+        "flag": "🇷🇺", "country": "RU", "currency": "RUB",
+        "formatted": "499 ₽", "discount": discount, "final_cents": None,
+        "usd_equiv": 5.50, "estimated": True,
     }] + other_results
     text = format_regional_prices("Game", results)
     assert f"-{discount}%" in text
