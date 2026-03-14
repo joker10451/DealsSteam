@@ -180,11 +180,13 @@ async def get_weekly_top(limit: int = 10) -> list[dict]:
 
 async def wishlist_add(user_id: int, query: str) -> bool:
     pool = await get_pool()
-    # Проверяем лимит
+    # Проверяем лимит — 50 если есть активный extended_wishlist, иначе 20
+    from rewards import has_active_reward
+    limit = 50 if await has_active_reward(user_id, "extended_wishlist") else 20
     count = await pool.fetchval(
         "SELECT COUNT(*) FROM wishlist WHERE user_id = $1", user_id
     )
-    if count >= 20:
+    if count >= limit:
         return None  # None = лимит превышен (отличается от False = уже есть)
     try:
         await pool.execute(

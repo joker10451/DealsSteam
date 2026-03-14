@@ -12,9 +12,9 @@ log = logging.getLogger(__name__)
 MSK = pytz.timezone("Europe/Moscow")
 
 
-# Каталог призов
+# Каталог призов — только то что реально выдаётся
 REWARDS_CATALOG = {
-    # Подписки
+    # Подписки (работают автоматически через has_active_reward)
     "priority_notify": {
         "name": "⚡️ Приоритетные уведомления",
         "description": "Получай уведомления о скидках на 5 минут раньше всех",
@@ -24,108 +24,39 @@ REWARDS_CATALOG = {
         "category": "subscriptions",
         "emoji": "⚡️",
     },
-    "custom_wishlist": {
+    "extended_wishlist": {
         "name": "💎 Расширенный вишлист",
-        "description": "Увеличь лимит вишлиста с 20 до 50 игр",
+        "description": "Лимит вишлиста увеличивается с 20 до 50 игр на 30 дней",
         "cost": 300,
         "type": "subscription",
         "duration_days": 30,
         "category": "subscriptions",
         "emoji": "💎",
     },
-    "exclusive_deals": {
-        "name": "🔥 Эксклюзивные скидки",
-        "description": "Доступ к закрытому каналу с эксклюзивными скидками",
-        "cost": 500,
-        "type": "subscription",
-        "duration_days": 30,
-        "category": "subscriptions",
-        "emoji": "🔥",
-    },
-    
-    # Steam ключи
-    "steam_key_5": {
-        "name": "🎮 Steam ключ 5$",
-        "description": "Случайный Steam ключ на игру стоимостью ~5$",
-        "cost": 1000,
-        "type": "one_time",
-        "category": "games",
-        "emoji": "🎮",
-    },
-    "steam_key_10": {
-        "name": "🎮 Steam ключ 10$",
-        "description": "Случайный Steam ключ на игру стоимостью ~10$",
-        "cost": 1800,
-        "type": "one_time",
-        "category": "games",
-        "emoji": "🎮",
-    },
-    "steam_key_20": {
-        "name": "🎮 Steam ключ 20$",
-        "description": "Случайный Steam ключ на игру стоимостью ~20$",
-        "cost": 3500,
-        "type": "one_time",
-        "category": "games",
-        "emoji": "🎮",
-    },
-    
-    # Новые призы - подписки на сервисы
-    "discord_nitro": {
-        "name": "💜 Discord Nitro",
-        "description": "Discord Nitro на 1 месяц",
-        "cost": 2500,
-        "type": "one_time",
-        "category": "services",
-        "emoji": "💜",
-    },
-    "spotify_premium": {
-        "name": "🎵 Spotify Premium",
-        "description": "Spotify Premium на 1 месяц",
-        "cost": 2200,
-        "type": "one_time",
-        "category": "services",
-        "emoji": "🎵",
-    },
-    "xbox_gamepass": {
-        "name": "🎮 Xbox Game Pass",
-        "description": "Xbox Game Pass PC на 1 месяц",
-        "cost": 2800,
-        "type": "one_time",
-        "category": "services",
-        "emoji": "🎮",
-    },
-    
-    # Разовые услуги
+
+    # Разовые услуги (выдаются вручную администратором)
     "personal_deal": {
         "name": "🎯 Персональная подборка",
-        "description": "Получи персональную подборку из 10 игр по твоим предпочтениям",
+        "description": "Администратор составит подборку из 10 игр по твоим предпочтениям",
         "cost": 150,
         "type": "one_time",
         "category": "services",
         "emoji": "🎯",
     },
-    
-    # Значки и статусы
+
+    # Значки в профиле (выдаются автоматически, хранятся в БД)
     "badge_vip": {
         "name": "👑 VIP значок",
-        "description": "Эксклюзивный VIP значок в профиле (навсегда)",
-        "cost": 2000,
+        "description": "VIP значок в профиле навсегда",
+        "cost": 500,
         "type": "permanent",
         "category": "badges",
         "emoji": "👑",
     },
-    "badge_legend": {
-        "name": "🏆 Значок легенды",
-        "description": "Легендарный значок в профиле (навсегда)",
-        "cost": 5000,
-        "type": "permanent",
-        "category": "badges",
-        "emoji": "🏆",
-    },
     "badge_founder": {
         "name": "⭐️ Значок основателя",
-        "description": "Эксклюзивный значок для первых 100 пользователей (навсегда)",
-        "cost": 3000,
+        "description": "Эксклюзивный значок для первых 100 участников навсегда",
+        "cost": 1000,
         "type": "permanent",
         "category": "badges",
         "emoji": "⭐️",
@@ -134,31 +65,10 @@ REWARDS_CATALOG = {
 }
 
 # Временные акции (скидки на призы)
-ACTIVE_PROMOTIONS = {
-    # Пример: "steam_key_10": {"discount": 20, "until": "2024-12-31"}
-}
+ACTIVE_PROMOTIONS: dict = {}
 
-# Эксклюзивные призы для топ-игроков (требуют определённое место в рейтинге)
-EXCLUSIVE_REWARDS = {
-    "golden_badge": {
-        "name": "🥇 Золотой значок",
-        "description": "Эксклюзивный золотой значок для топ-3 игроков (навсегда)",
-        "cost": 10000,
-        "type": "permanent",
-        "category": "exclusive",
-        "emoji": "🥇",
-        "required_rank": 3,  # Нужно быть в топ-3
-    },
-    "platinum_badge": {
-        "name": "💎 Платиновый значок",
-        "description": "Эксклюзивный платиновый значок для топ-10 игроков (навсегда)",
-        "cost": 7500,
-        "type": "permanent",
-        "category": "exclusive",
-        "emoji": "💎",
-        "required_rank": 10,  # Нужно быть в топ-10
-    },
-}
+# Эксклюзивные призы (пока пусто — добавим когда появятся реальные товары)
+EXCLUSIVE_REWARDS: dict = {}
 
 
 async def init_rewards_table():

@@ -236,9 +236,15 @@ async def handle_wishlist_add(message: Message):
     query = message.text.strip()
     if len(query) < 2:
         return
-    added = await wishlist_add(message.from_user.id, query)
+    user_id = message.from_user.id
+    added = await wishlist_add(user_id, query)
     if added is None:
-        await message.answer("❌ В вишлисте максимум 20 игр. Удали что-нибудь через /remove.")
+        from rewards import has_active_reward
+        limit = 50 if await has_active_reward(user_id, "extended_wishlist") else 20
+        await message.answer(
+            f"❌ В вишлисте максимум {limit} игр. Удали что-нибудь через /remove.\n"
+            + ("" if limit == 50 else "💎 Купи расширенный вишлист в /shop чтобы увеличить до 50.")
+        )
     elif added:
         await message.answer(
             f"✅ <b>{esc(query)}</b> добавлено в вишлист.\n"
