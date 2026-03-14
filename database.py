@@ -128,6 +128,7 @@ async def init_db():
         await init_genre_table(conn)
         await init_onboarding_tables(conn)
         await init_notification_tables(conn)
+        await init_price_game_answers_table(conn)
     
     # Инициализация таблиц мини-игр
     from minigames import init_minigames_db
@@ -1068,3 +1069,27 @@ async def notif_queue_get_users_with_pending() -> list[int]:
         "SELECT DISTINCT user_id FROM notification_queue"
     )
     return [r["user_id"] for r in rows]
+
+
+# --- price game answers (anti-abuse) ---
+
+async def init_price_game_answers_table(conn):
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS price_game_answers (
+            user_id BIGINT NOT NULL,
+            deal_id TEXT NOT NULL,
+            answered_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (user_id, deal_id)
+        )
+    """)
+
+
+async def record_price_game_answer(user_id: int, deal_id: str) -> bool:
+    """Записать ответ пользователя на игру угадай цену.
+    Возвращает True если ответ принят (первый раз), False если уже отвечал."""
+    pool = await get_pool()
+    result = await pool.execute(
+        "INSERT INTO price_game_answers (user_id, deal_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        user_id, deal_id,
+    )
+    return result == "INSERT 0 1"

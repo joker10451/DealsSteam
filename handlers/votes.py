@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from database import add_vote, get_votes, get_price_game, increment_metric
+from database import add_vote, get_votes, get_price_game, increment_metric, record_price_game_answer
 
 router = Router()
 
@@ -70,6 +70,12 @@ async def handle_price_game(callback: CallbackQuery):
     correct = await get_price_game(deal_id)
     if correct is None:
         await callback.answer("Игра уже закончилась!", show_alert=False)
+        return
+
+    # Атомарная защита от повторного ответа
+    accepted = await record_price_game_answer(callback.from_user.id, deal_id)
+    if not accepted:
+        await callback.answer("Ты уже отвечал на этот вопрос!", show_alert=True)
         return
 
     is_correct = (chosen == correct)
