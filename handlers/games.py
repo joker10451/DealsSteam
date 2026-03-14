@@ -54,17 +54,28 @@ async def cmd_leaderboard(message: Message):
 
     from rewards import get_user_badges
 
+    def games_word(n: int) -> str:
+        if 11 <= n % 100 <= 19:
+            return "игр"
+        r = n % 10
+        if r == 1:
+            return "игра"
+        if 2 <= r <= 4:
+            return "игры"
+        return "игр"
+
     lines = ["🏆 <b>Таблица лидеров</b>\n"]
-    
     medals = ["🥇", "🥈", "🥉"]
+
     for i, leader in enumerate(leaders, 1):
-        medal = medals[i-1] if i <= 3 else f"{i}."
+        medal = medals[i - 1] if i <= 3 else f"{i}."
         score = leader["total_score"]
         games = leader["games_played"]
+        name = esc(leader.get("username") or f"Игрок {leader['user_id'] % 10000}")
         badges = await get_user_badges(leader["user_id"])
         badge_str = f" {badges}" if badges else ""
-        lines.append(f"{medal}{badge_str} <b>{score}</b> баллов ({games} игр)")
-    
+        lines.append(f"{medal} <b>{name}</b>{badge_str} — {score} баллов, {games} {games_word(games)}")
+
     lines.append("\n💡 Играй в мини-игры, чтобы попасть в топ!")
     
     await message.answer("\n".join(lines))
@@ -146,7 +157,10 @@ async def handle_screenshot_answer(callback: CallbackQuery):
     game_id = data_parts[1]
     answer = data_parts[2]
     
-    result = await check_screenshot_answer(user_id, game_id, answer)
+    result = await check_screenshot_answer(
+        user_id, game_id, answer,
+        username=callback.from_user.username or callback.from_user.first_name
+    )
     
     if "error" in result:
         await callback.answer(result["error"], show_alert=True)

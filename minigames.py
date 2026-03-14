@@ -27,12 +27,16 @@ async def init_scores_table():
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_scores (
                 user_id BIGINT PRIMARY KEY,
+                username TEXT,
                 total_score INT DEFAULT 0,
                 games_played INT DEFAULT 0,
                 correct_answers INT DEFAULT 0,
                 last_played TIMESTAMPTZ,
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
+        """)
+        await conn.execute("""
+            ALTER TABLE user_scores ADD COLUMN IF NOT EXISTS username TEXT
         """)
         
         # Таблица истории баллов для отслеживания прогресса по челленджам
@@ -51,7 +55,7 @@ async def init_scores_table():
         """)
 
 
-async def add_score(user_id: int, points: int, correct: bool = True, reason: str = "game"):
+async def add_score(user_id: int, points: int, correct: bool = True, reason: str = "game", username: str = None):
     """Добавить баллы пользователю."""
     if points < 0:
         return []
@@ -76,14 +80,15 @@ async def add_score(user_id: int, points: int, correct: bool = True, reason: str
         # games_played инкрементируем только для реальных игровых действий
         is_game_action = reason in ("game", "screenshot", "price_game")
         await conn.execute("""
-            INSERT INTO user_scores (user_id, total_score, games_played, correct_answers, last_played)
-            VALUES ($1, $2, $3::int, $4::int, NOW())
+            INSERT INTO user_scores (user_id, username, total_score, games_played, correct_answers, last_played)
+            VALUES ($1, $2, $3, $4::int, $5::int, NOW())
             ON CONFLICT (user_id) DO UPDATE SET
-                total_score = user_scores.total_score + $2,
-                games_played = user_scores.games_played + $3::int,
-                correct_answers = user_scores.correct_answers + $4::int,
+                username = COALESCE($2, user_scores.username),
+                total_score = user_scores.total_score + $3,
+                games_played = user_scores.games_played + $4::int,
+                correct_answers = user_scores.correct_answers + $5::int,
                 last_played = NOW()
-        """, user_id, points, 1 if is_game_action else 0, 1 if (correct and is_game_action) else 0)
+        """, user_id, username, points, 1 if is_game_action else 0, 1 if (correct and is_game_action) else 0)
 
         # Записываем в историю
         await conn.execute("""
@@ -213,7 +218,7 @@ async def create_screenshot_game(deal) -> Optional[dict]:
     }
 
 
-async def check_screenshot_answer(user_id: int, game_id: str, answer: str) -> dict:
+async def check_screenshot_answer(user_id: int, game_id: str, answer: str, username: str = None) -> dict:
     """Проверить ответ пользователя."""
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -240,7 +245,7 @@ async def check_screenshot_answer(user_id: int, game_id: str, answer: str) -> di
     
     # Начисляем баллы и проверяем достижения
     points = 10 if is_correct else 0
-    new_achievements = await add_score(user_id, points, is_correct, reason="screenshot")
+    new_achievements = await add_score(user_id, points, is_correct, reason="screenshot", username=username)
     
     # Увеличиваем счётчик правильных ответов для достижений
     if is_correct:
