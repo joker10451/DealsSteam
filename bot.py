@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from datetime import datetime
 from html import escape
 from aiogram import Bot, Dispatcher, F
@@ -12,6 +13,7 @@ from aiogram.types import (
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from aiohttp import web
 import pytz
 
 from config import (
@@ -768,14 +770,34 @@ async def notify_admin(text: str):
             pass
 
 
+# ─── Keep-alive HTTP сервер для Render ───────────────────────────────────────
+
+async def handle_ping(request):
+    return web.Response(text="OK")
+
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    app.router.add_get("/health", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    log.info(f"HTTP сервер запущен на порту {port}")
+
+
 # ─── Запуск ──────────────────────────────────────────────────────────────────
 
 async def main():
     await init_db()
 
+    # Запускаем HTTP сервер чтобы Render не засыпал
+    await start_web_server()
+
     scheduler = AsyncIOScheduler(timezone=MSK)
 
-    # Авто-тест парсеров каждое утро в 8:00
     scheduler.add_job(
         run_parser_tests,
         CronTrigger(hour=8, minute=0, timezone=MSK),
@@ -783,7 +805,6 @@ async def main():
     )
     log.info("Авто-тест парсеров: каждый день в 08:00 МСК")
 
-    # Скрытые жемчужины — каждый день в 14:00 МСК
     scheduler.add_job(
         post_hidden_gems,
         CronTrigger(hour=14, minute=0, timezone=MSK),
@@ -799,7 +820,6 @@ async def main():
         )
         log.info(f"Запланирована публикация в {hour:02d}:{minute:02d} МСК")
 
-    # Еженедельный дайджест — каждое воскресенье в 12:00 МСК
     scheduler.add_job(
         post_weekly_digest,
         CronTrigger(day_of_week="sun", hour=12, minute=0, timezone=MSK),
