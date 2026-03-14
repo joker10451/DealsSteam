@@ -116,6 +116,18 @@ async def get_game_info(title: str) -> Optional[dict]:
         return None
 
     game = results[0]
+    
+    # Проверяем схожесть названий (простая проверка)
+    game_name = game.get("name", "").lower()
+    search_title = title.lower()
+    # Если названия слишком разные, возвращаем None
+    if game_name and search_title not in game_name and game_name not in search_title:
+        # Проверяем хотя бы частичное совпадение слов
+        search_words = set(search_title.split())
+        game_words = set(game_name.split())
+        common_words = search_words & game_words
+        if len(common_words) < 2:  # Меньше 2 общих слов - скорее всего не та игра
+            return None
 
     # Описание — первые 2 предложения, переводим на русский
     summary = game.get("summary", "")
