@@ -152,6 +152,7 @@ async def handle_screenshot_answer(callback: CallbackQuery):
     is_correct = result["is_correct"]
     correct_title = result["correct_title"]
     points = result["points"]
+    new_achievements = result.get("new_achievements", [])
     
     if is_correct:
         response = f"✅ Правильно! +{points} баллов\n\nЭто была игра: {correct_title}"
@@ -159,6 +160,12 @@ async def handle_screenshot_answer(callback: CallbackQuery):
     else:
         response = f"❌ Неверно.\n\nПравильный ответ: {correct_title}"
         await callback.answer("Неверно 😔", show_alert=False)
+    
+    # Если есть новые достижения, добавляем их в ответ
+    if new_achievements:
+        response += "\n\n🏆 <b>Новые достижения:</b>\n"
+        for ach in new_achievements:
+            response += f"\n{ach['name']}\n{esc(ach['description'])}\n+{ach['reward']} баллов!"
     
     # Обновляем сообщение
     try:
@@ -192,11 +199,29 @@ async def cmd_profile(message: Message):
             "SELECT COUNT(*) FROM votes WHERE user_id = $1",
             user_id
         )
+        
+        # Получаем дополнительную статистику для достижений
+        extended_stats = await conn.fetchrow("""
+            SELECT 
+                current_streak,
+                best_streak,
+                daily_streak,
+                screenshot_correct,
+                challenges_completed
+            FROM user_scores
+            WHERE user_id = $1
+        """, user_id)
     
     total = stats["total_score"]
     played = stats["games_played"]
     correct = stats["correct_answers"]
     accuracy = int(correct / played * 100) if played > 0 else 0
+    
+    # Получаем количество достижений
+    from achievements import get_user_achievements
+    achievements_data = await get_user_achievements(user_id)
+    unlocked_count = achievements_data['unlocked_count']
+    total_achievements = achievements_data['total']
     
     text = f"""
 👤 <b>Профиль: {esc(username)}</b>
@@ -211,18 +236,30 @@ async def cmd_profile(message: Message):
 
 ━━━━━━━━━━━━━━
 
+🔥 <b>Серии:</b>
+⚡️ Текущая: <b>{extended_stats['current_streak'] if extended_stats else 0}</b>
+🏆 Лучшая: <b>{extended_stats['best_streak'] if extended_stats else 0}</b>
+📅 Дней подряд: <b>{extended_stats['daily_streak'] if extended_stats else 0}</b>
+
+━━━━━━━━━━━━━━
+
 📋 <b>Активность:</b>
 💝 Игр в вишлисте: <b>{wishlist_count}</b>
 🔥 Голосов: <b>{votes_count}</b>
+📸 Скриншотов угадано: <b>{extended_stats['screenshot_correct'] if extended_stats else 0}</b>
+🎯 Челленджей выполнено: <b>{extended_stats['challenges_completed'] if extended_stats else 0}</b>
 
 ━━━━━━━━━━━━━━
+
+🏆 <b>Достижения: {unlocked_count}/{total_achievements}</b>
 
 💡 Играй в мини-игры, чтобы заработать больше баллов!
 """
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏆 Мои достижения", callback_data="show_achievements")],
         [InlineKeyboardButton(text="🎮 Мини-игры", callback_data="show_games")],
-        [InlineKeyboardButton(text="🏆 Таблица лидеров", callback_data="show_leaderboard")]
+        [InlineKeyboardButton(text="📊 Таблица лидеров", callback_data="show_leaderboard")]
     ])
     
     await message.answer(text.strip(), reply_markup=keyboard)
@@ -240,3 +277,35 @@ async def show_leaderboard_callback(callback: CallbackQuery):
     """Показать таблицу лидеров через callback."""
     await callback.answer()
     await cmd_leaderboard(callback.message)
+
+
+@router.message(Command("achievements"))
+async def cmd_achievements(message: Message):
+    """Показать достижения пользователя."""
+    user_id = message.from_user.id
+    
+    from achievements import get_user_achievements, format_achievements_message
+    achievements_data = await get_user_achievements(user_id)
+    
+    text = format_achievements_message(achievements_data)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Мой профиль", callback_data="show_profile")],
+        [InlineKeyboardButton(text="🎮 Мини-игры", callback_data="show_games")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(lambda c: c.data == "show_achievements")
+async def show_achievements_callback(callback: CallbackQuery):
+    """Показать достижения через callback."""
+    await callback.answer()
+    await cmd_achievements(callback.message)
+
+
+@router.callback_query(lambda c: c.data == "show_profile")
+async def show_profile_callback(callback: CallbackQuery):
+    """Показать профиль через callback."""
+    await callback.answer()
+    await cmd_profile(callback.message)

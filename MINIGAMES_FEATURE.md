@@ -2,7 +2,7 @@
 
 ## Обзор
 
-Добавлена система мини-игр для увеличения вовлечённости подписчиков канала. Пользователи могут зарабатывать баллы, участвуя в играх и челленджах.
+Добавлена система мини-игр для увеличения вовлечённости подписчиков канала. Пользователи могут зарабатывать баллы, участвуя в играх и челленджах, а также разблокировать достижения.
 
 ## Функционал
 
@@ -10,6 +10,7 @@
 - Каждый пользователь имеет профиль с баллами
 - Баллы начисляются за правильные ответы в играх
 - Таблица лидеров показывает топ-10 игроков
+- Отслеживание серий правильных ответов
 
 ### 2. Игра "Угадай игру по скриншоту"
 - Публикуется автоматически после обычных постов (20% шанс)
@@ -26,6 +27,38 @@
 - Награда: 50 баллов за выполнение
 - Типы челленджей: найти самую дешёвую игру дня и др.
 
+### 5. Система достижений 🆕
+- 15+ уникальных достижений
+- Достижения за баллы, количество игр, точность, активность
+- Каждое достижение даёт бонусные баллы
+- Автоматическая разблокировка при выполнении условий
+
+## Достижения
+
+### За баллы:
+- 🎯 **Первые шаги** — заработай первые баллы (+5)
+- 💯 **Сотка** — набери 100 баллов (+20)
+- ⭐️ **Звезда** — набери 500 баллов (+50)
+- 🏆 **Легенда** — набери 1000 баллов (+100)
+
+### За количество игр:
+- 🎮 **Игроман** — сыграй 10 игр (+15)
+- 🎯 **Профи** — сыграй 50 игр (+50)
+- 🔥 **Мастер** — сыграй 100 игр (+100)
+
+### За точность:
+- 🎯 **Снайпер** — достигни 80% точности при 10+ играх (+30)
+- 🏹 **Меткий стрелок** — достигни 90% точности при 20+ играх (+75)
+- 💎 **Безупречный** — 10 правильных ответов подряд (+50)
+
+### За активность:
+- 📅 **Ежедневник** — играй 7 дней подряд (+40)
+- 👑 **Чемпион недели** — стань первым в таблице лидеров (+100)
+
+### Специальные:
+- 🎯 **Мастер челленджей** — выполни 10 ежедневных челленджей (+60)
+- 📸 **Эксперт скриншотов** — угадай 20 игр по скриншоту (+50)
+
 ## Команды бота
 
 ### Для пользователей:
@@ -33,11 +66,12 @@
 - `/score` — показать свои баллы и статистику
 - `/leaderboard` — таблица лидеров (топ-10)
 - `/profile` — полный профиль пользователя
+- `/achievements` — мои достижения
 - `/challenge` — показать челлендж дня
 
 ## Структура БД
 
-### Таблица `user_scores`
+### Таблица `user_scores` (расширенная)
 ```sql
 CREATE TABLE user_scores (
     user_id BIGINT PRIMARY KEY,
@@ -45,69 +79,51 @@ CREATE TABLE user_scores (
     games_played INT DEFAULT 0,
     correct_answers INT DEFAULT 0,
     last_played TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    -- Новые колонки для достижений:
+    current_streak INT DEFAULT 0,
+    best_streak INT DEFAULT 0,
+    daily_streak INT DEFAULT 0,
+    last_daily_play DATE,
+    screenshot_correct INT DEFAULT 0,
+    challenges_completed INT DEFAULT 0
 )
 ```
 
-### Таблица `screenshot_games`
+### Таблица `user_achievements` 🆕
 ```sql
-CREATE TABLE screenshot_games (
-    game_id TEXT PRIMARY KEY,
-    correct_title TEXT NOT NULL,
-    screenshot_url TEXT NOT NULL,
-    options TEXT[] NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-)
-```
-
-### Таблица `screenshot_answers`
-```sql
-CREATE TABLE screenshot_answers (
+CREATE TABLE user_achievements (
     user_id BIGINT,
-    game_id TEXT,
-    answer TEXT,
-    is_correct BOOLEAN,
-    answered_at TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (user_id, game_id)
+    achievement_id TEXT,
+    unlocked_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (user_id, achievement_id)
 )
 ```
 
-### Таблица `daily_challenges`
-```sql
-CREATE TABLE daily_challenges (
-    challenge_date DATE PRIMARY KEY,
-    challenge_type TEXT NOT NULL,
-    challenge_data JSONB NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-)
-```
-
-### Таблица `daily_challenge_completions`
-```sql
-CREATE TABLE daily_challenge_completions (
-    user_id BIGINT,
-    challenge_date DATE,
-    completed_at TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (user_id, challenge_date)
-)
-```
+### Остальные таблицы
+- `screenshot_games` — данные игр со скриншотами
+- `screenshot_answers` — ответы пользователей
+- `daily_challenges` — ежедневные челленджи
+- `daily_challenge_completions` — выполненные челленджи
 
 ## Файлы
 
 - `minigames.py` — логика мини-игр, работа с БД
+- `achievements.py` — система достижений 🆕
 - `handlers/games.py` — обработчики команд и callback'ов
-- `publisher.py` — публикация игр в канал (функция `publish_screenshot_game`)
+- `publisher.py` — публикация игр в канал
 
 ## Интеграция
 
-1. Таблицы создаются автоматически при запуске бота (`database.py` → `init_minigames_db()`)
-2. Роутер зарегистрирован в `handlers/__init__.py`
-3. Команды добавлены в меню бота (`bot.py`)
-4. Игра со скриншотом публикуется случайно после обычных постов
+1. Таблицы создаются автоматически при запуске бота
+2. Достижения проверяются после каждой игры
+3. Уведомления о новых достижениях показываются сразу
+4. Бонусные баллы начисляются автоматически
 
 ## Будущие улучшения
 
 - Автоматическая генерация ежедневных челленджей
-- Больше типов мини-игр (угадай жанр, угадай год выхода и т.д.)
-- Награды и достижения
-- Еженедельные турниры
+- Больше типов мини-игр (угадай жанр, угадай год выхода)
+- Сезонные достижения и события
+- Еженедельные турниры с призами
+- Обмен баллов на бонусы

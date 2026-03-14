@@ -49,6 +49,13 @@ async def add_score(user_id: int, points: int, correct: bool = True):
                 correct_answers = user_scores.correct_answers + CASE WHEN $3 THEN 1 ELSE 0 END,
                 last_played = NOW()
         """, user_id, points, correct)
+    
+    # Обновляем серии и проверяем достижения
+    from achievements import update_streak, update_daily_streak, check_and_unlock_achievements
+    await update_streak(user_id, correct)
+    await update_daily_streak(user_id)
+    
+    return await check_and_unlock_achievements(user_id)
 
 
 async def get_user_score(user_id: int) -> dict:
@@ -195,14 +202,24 @@ async def check_screenshot_answer(user_id: int, game_id: str, answer: str) -> di
             VALUES ($1, $2, $3, $4)
         """, user_id, game_id, answer, is_correct)
     
-    # Начисляем баллы
+    # Начисляем баллы и проверяем достижения
     points = 10 if is_correct else 0
-    await add_score(user_id, points, is_correct)
+    new_achievements = await add_score(user_id, points, is_correct)
+    
+    # Увеличиваем счётчик правильных ответов для достижений
+    if is_correct:
+        from achievements import increment_screenshot_correct
+        await increment_screenshot_correct(user_id)
+        # Проверяем достижения ещё раз после обновления счётчика
+        more_achievements = await check_and_unlock_achievements(user_id)
+        if more_achievements:
+            new_achievements.extend(more_achievements)
     
     return {
         "is_correct": is_correct,
         "correct_title": correct_title,
-        "points": points
+        "points": points,
+        "new_achievements": new_achievements if new_achievements else []
     }
 
 
@@ -289,10 +306,21 @@ async def complete_daily_challenge(user_id: int) -> dict:
             VALUES ($1, $2)
         """, user_id, today)
     
-    # Начисляем бонусные баллы
-    await add_score(user_id, 50, True)
+    # Начисляем бонусные баллы и проверяем достижения
+    new_achievements = await add_score(user_id, 50, True)
     
-    return {"success": True, "points": 50}
+    # Увеличиваем счётчик выполненных челленджей
+    from achievements import increment_challenges_completed, check_and_unlock_achievements
+    await increment_challenges_completed(user_id)
+    more_achievements = await check_and_unlock_achievements(user_id)
+    if more_achievements:
+        new_achievements.extend(more_achievements)
+    
+    return {
+        "success": True,
+        "points": 50,
+        "new_achievements": new_achievements if new_achievements else []
+    }
 
 
 # ============================================================================
@@ -304,4 +332,9 @@ async def init_minigames_db():
     await init_scores_table()
     await init_screenshot_game_table()
     await init_daily_challenge_table()
-    log.info("Таблицы мини-игр инициализированы")
+    
+    # Инициализируем таблицу достижений
+    from achievements import init_achievements_table
+    await init_achievements_table()
+    
+    log.info("Таблицы мини-игр и достижений инициализированы")
