@@ -55,21 +55,22 @@ def get_referral_link(user_id: int, bot_username: str) -> str:
 
 
 async def decode_referral_code(code: str) -> Optional[int]:
-    """Декодирует реферальный код в user_id."""
-    # Проверяем все возможные user_id (брутфорс по базе)
+    """Декодирует реферальный код в user_id через прямой поиск по хешу."""
+    if not code or len(code) != 8:
+        return None
+    # Ищем только среди пользователей у которых есть запись в user_scores
+    # Ограничиваем выборку последними 10000 активными пользователями
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Получаем всех пользователей, у которых есть баллы
         users = await conn.fetch("""
             SELECT user_id FROM user_scores
+            ORDER BY created_at DESC LIMIT 10000
         """)
-        
         for user in users:
             user_id = user["user_id"]
-            if generate_referral_code(user_id) == code:
+            if generate_referral_code(user_id) == code.upper():
                 return user_id
-        
-        return None
+    return None
 
 
 async def register_referral(referrer_id: int, referee_id: int) -> dict:
@@ -86,13 +87,20 @@ async def register_referral(referrer_id: int, referee_id: int) -> dict:
         
         if existing:
             return {"error": "Ты уже был приглашён другим пользователем"}
-        
+
+        # Лимит: один реферер не может пригласить более 50 человек
+        referrer_count = await conn.fetchval("""
+            SELECT COUNT(*) FROM referrals WHERE referrer_id = $1
+        """, referrer_id)
+        if referrer_count and referrer_count >= 50:
+            return {"error": "Достигнут лимит приглашений"}
+
         # Проверяем, не новый ли это пользователь (не играл раньше)
         games_played = await conn.fetchval("""
             SELECT games_played FROM user_scores WHERE user_id = $1
         """, referee_id)
-        
-        if games_played and games_played > 0:
+
+        if games_played is not None and games_played > 0:
             return {"error": "Реферальная ссылка работает только для новых пользователей"}
         
         # Регистрируем реферала

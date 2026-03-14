@@ -53,29 +53,49 @@ async def init_scores_table():
 
 async def add_score(user_id: int, points: int, correct: bool = True, reason: str = "game"):
     """Добавить баллы пользователю."""
+    if points < 0:
+        return []
+
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # Rate limit: не более 1 начисления в секунду с одной причиной
+        if reason == "game":
+            last = await conn.fetchval("""
+                SELECT earned_at FROM user_score_history
+                WHERE user_id = $1 AND reason = $2
+                ORDER BY earned_at DESC LIMIT 1
+            """, user_id, reason)
+            if last:
+                from datetime import timezone
+                now_utc = datetime.now(timezone.utc)
+                last_utc = last if last.tzinfo else last.replace(tzinfo=timezone.utc)
+                if (now_utc - last_utc).total_seconds() < 1:
+                    log.warning(f"Rate limit: user {user_id} добавление баллов слишком быстро")
+                    return []
+
+        # games_played инкрементируем только для реальных игровых действий
+        is_game_action = reason in ("game", "screenshot", "price_game")
         await conn.execute("""
             INSERT INTO user_scores (user_id, total_score, games_played, correct_answers, last_played)
-            VALUES ($1, $2, 1, $3::int, NOW())
+            VALUES ($1, $2, $3::int, $4::int, NOW())
             ON CONFLICT (user_id) DO UPDATE SET
                 total_score = user_scores.total_score + $2,
-                games_played = user_scores.games_played + 1,
-                correct_answers = user_scores.correct_answers + $3::int,
+                games_played = user_scores.games_played + $3::int,
+                correct_answers = user_scores.correct_answers + $4::int,
                 last_played = NOW()
-        """, user_id, points, 1 if correct else 0)
-        
+        """, user_id, points, 1 if is_game_action else 0, 1 if (correct and is_game_action) else 0)
+
         # Записываем в историю
         await conn.execute("""
             INSERT INTO user_score_history (user_id, points, reason)
             VALUES ($1, $2, $3)
         """, user_id, points, reason)
-    
+
     # Обновляем серии и проверяем достижения
     from achievements import update_streak, update_daily_streak, check_and_unlock_achievements
     await update_streak(user_id, correct)
     await update_daily_streak(user_id)
-    
+
     return await check_and_unlock_achievements(user_id)
 
 
@@ -208,20 +228,15 @@ async def check_screenshot_answer(user_id: int, game_id: str, answer: str) -> di
         correct_title = row["correct_title"]
         is_correct = answer == correct_title
         
-        # Проверяем, не отвечал ли уже
-        existing = await conn.fetchval("""
-            SELECT 1 FROM screenshot_answers
-            WHERE user_id = $1 AND game_id = $2
-        """, user_id, game_id)
-        
-        if existing:
-            return {"error": "Ты уже отвечал на этот вопрос!"}
-        
-        # Сохраняем ответ
-        await conn.execute("""
+        # Атомарная вставка ответа — защита от двойного нажатия
+        insert_result = await conn.execute("""
             INSERT INTO screenshot_answers (user_id, game_id, answer, is_correct)
             VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, game_id) DO NOTHING
         """, user_id, game_id, answer, is_correct)
+
+        if insert_result == "INSERT 0 0":
+            return {"error": "Ты уже отвечал на этот вопрос!"}
     
     # Начисляем баллы и проверяем достижения
     points = 10 if is_correct else 0
@@ -316,23 +331,18 @@ async def create_daily_challenge(challenge_type: str, data: dict):
 async def complete_daily_challenge(user_id: int) -> dict:
     """Отметить челлендж как выполненный."""
     today = datetime.now(MSK).date()
-    
+
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Проверяем, не выполнен ли уже
-        existing = await conn.fetchval("""
-            SELECT 1 FROM daily_challenge_completions
-            WHERE user_id = $1 AND challenge_date = $2
-        """, user_id, today)
-        
-        if existing:
-            return {"error": "Ты уже выполнил челлендж сегодня!"}
-        
-        # Отмечаем как выполненный
-        await conn.execute("""
+        # Атомарная вставка — если уже выполнен, INSERT вернёт 0 строк
+        result = await conn.execute("""
             INSERT INTO daily_challenge_completions (user_id, challenge_date)
             VALUES ($1, $2)
+            ON CONFLICT (user_id, challenge_date) DO NOTHING
         """, user_id, today)
+
+        if result == "INSERT 0 0":
+            return {"error": "Ты уже выполнил челлендж сегодня!"}
     
     # Начисляем бонусные баллы и проверяем достижения
     new_achievements = await add_score(user_id, 50, True)

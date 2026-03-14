@@ -180,6 +180,34 @@ async def check_and_unlock_achievements(user_id: int) -> List[dict]:
         
         # Проверяем каждое достижение
         newly_unlocked = []
+
+        def _check(achievement_id: str, ctx: dict) -> bool:
+            """Явные проверки вместо eval() — безопасно."""
+            s = ctx['score']
+            gp = ctx['games_played']
+            acc = ctx['accuracy']
+            streak = ctx['streak']
+            ds = ctx['daily_streak']
+            lp = ctx['leaderboard_position']
+            cc = ctx['challenges_completed']
+            sc = ctx['screenshot_correct']
+            checks = {
+                "first_points":      s >= 1,
+                "score_100":         s >= 100,
+                "score_500":         s >= 500,
+                "score_1000":        s >= 1000,
+                "games_10":          gp >= 10,
+                "games_50":          gp >= 50,
+                "games_100":         gp >= 100,
+                "accuracy_80":       acc >= 80 and gp >= 10,
+                "accuracy_90":       acc >= 90 and gp >= 20,
+                "perfect_10":        streak >= 10,
+                "daily_player":      ds >= 7,
+                "weekly_champion":   lp == 1,
+                "challenge_master":  cc >= 10,
+                "screenshot_expert": sc >= 20,
+            }
+            return checks.get(achievement_id, False)
         
         for achievement_id, achievement in ACHIEVEMENTS.items():
             if achievement_id in unlocked_ids:
@@ -199,7 +227,7 @@ async def check_and_unlock_achievements(user_id: int) -> List[dict]:
             }
             
             try:
-                if eval(requirement, {"__builtins__": {}}, context):
+                if _check(achievement_id, context):
                     # Разблокируем достижение
                     await conn.execute("""
                         INSERT INTO user_achievements (user_id, achievement_id)

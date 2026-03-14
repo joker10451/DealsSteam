@@ -212,6 +212,8 @@ async def purchase_reward(user_id: int, reward_id: str) -> dict:
         
         if balance is None or balance < cost:
             return {"error": f"Недостаточно баллов. Нужно: {cost}, у тебя: {balance if balance is not None else 0}"}
+
+        # Проверяем, не куплен ли уже permanent приз
         if reward["type"] == "permanent":
             existing = await conn.fetchval("""
                 SELECT 1 FROM user_rewards
@@ -219,25 +221,29 @@ async def purchase_reward(user_id: int, reward_id: str) -> dict:
             """, user_id, reward_id)
             if existing:
                 return {"error": "Ты уже купил этот приз!"}
-        
-        # Списываем баллы
-        await conn.execute("""
-            UPDATE user_scores
-            SET total_score = total_score - $2
-            WHERE user_id = $1
-        """, user_id, cost)
-        
-        # Добавляем приз
-        expires_at = None
-        if reward["type"] == "subscription":
-            from datetime import timedelta
-            expires_at = datetime.now(MSK) + timedelta(days=reward["duration_days"])
-        
-        await conn.execute("""
-            INSERT INTO user_rewards (user_id, reward_id, expires_at)
-            VALUES ($1, $2, $3)
-        """, user_id, reward_id, expires_at)
-        
+
+        # Атомарно списываем баллы и добавляем приз в одной транзакции
+        async with conn.transaction():
+            # Повторно проверяем баланс внутри транзакции (защита от race condition)
+            locked_balance = await conn.fetchval("""
+                SELECT total_score FROM user_scores WHERE user_id = $1 FOR UPDATE
+            """, user_id)
+            if locked_balance is None or locked_balance < cost:
+                return {"error": f"Недостаточно баллов. Нужно: {cost}, у тебя: {locked_balance or 0}"}
+
+            await conn.execute("""
+                UPDATE user_scores SET total_score = total_score - $2 WHERE user_id = $1
+            """, user_id, cost)
+
+            expires_at = None
+            if reward["type"] == "subscription":
+                expires_at = datetime.now(MSK) + timedelta(days=reward["duration_days"])
+
+            await conn.execute("""
+                INSERT INTO user_rewards (user_id, reward_id, expires_at)
+                VALUES ($1, $2, $3)
+            """, user_id, reward_id, expires_at)
+
         log.info(f"Пользователь {user_id} купил приз {reward_id} за {cost} баллов")
     
     return {
