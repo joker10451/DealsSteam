@@ -23,3 +23,6 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 # IGDB API (Twitch) — https://dev.twitch.tv/console
 IGDB_CLIENT_ID = os.getenv("IGDB_CLIENT_ID", "")
 IGDB_CLIENT_SECRET = os.getenv("IGDB_CLIENT_SECRET", "")
+
+# Фильтр 18+ контента
+FILTER_ADULT = os.getenv("FILTER_ADULT", "false").lower() == "true"

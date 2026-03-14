@@ -25,11 +25,13 @@ from config import (
     BOT_TOKEN, CHANNEL_ID, ADMIN_ID,
     MIN_DISCOUNT_PERCENT, MIN_STEAM_RATING,
     POST_TIMES, TOP_DEALS_PER_POST, DATABASE_URL,
+    FILTER_ADULT,
 )
 from database import (
     init_db, is_already_posted, mark_as_posted, cleanup_old_records,
     get_weekly_top, wishlist_add, wishlist_remove, wishlist_list, get_wishlist_matches,
     add_vote, get_votes, get_top_voted, save_price_game, get_price_game,
+    increment_metric, get_metrics_summary, wishlist_remove_user,
 )
 from parsers.steam import get_steam_deals
 from parsers.gog import get_gog_deals
@@ -116,7 +118,9 @@ async def cmd_start(message: Message):
         + (
             "\n<b>Админ:</b>\n"
             "/post — опубликовать скидки прямо сейчас\n"
-            "/gems — опубликовать скрытые жемчужины"
+            "/gems — опубликовать скрытые жемчужины\n"
+            "/digest — опубликовать дайджест недели\n"
+            "/stats — метрики за 7 дней"
             if message.from_user.id == ADMIN_ID else ""
         ),
         reply_markup=main_keyboard(),
@@ -351,13 +355,66 @@ async def cmd_gems(message: Message):
         await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
 
 
+@dp.message(Command("digest"))
+async def cmd_digest(message: Message):
+    """
+    /digest — немедленно публикует еженедельный дайджест.
+    Доступно только администратору.
+    """
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    status_msg = await message.answer("🔄 Формирую дайджест...")
+    try:
+        await post_weekly_digest()
+        await status_msg.edit_text("✅ Готово.")
+    except Exception as e:
+        log.error(f"Ошибка ручной публикации дайджеста: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
+
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message):
+    """
+    /stats — показывает метрики за последние 7 дней.
+    Доступно только администратору.
+    """
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    rows = await get_metrics_summary(days=7)
+    if not rows:
+        await message.answer("Метрик пока нет.")
+        return
+
+    lines = ["📊 <b>Метрики за 7 дней:</b>\n"]
+    labels = {
+        "published": "📢 Публикаций",
+        "publish_error": "❌ Ошибок публикации",
+        "wishlist_notify": "🔔 Уведомлений вишлиста",
+        "vote_fire": "🔥 Голосов огонь",
+        "vote_poop": "💩 Голосов мимо",
+    }
+    for row in rows:
+        label = labels.get(row["event"], row["event"])
+        lines.append(f"{label}: <b>{row['total']}</b>")
+
+    await message.answer("\n".join(lines))
+
+
 # ─── Голосование 🔥 / 💩 ─────────────────────────────────────────────────────
 
-def vote_keyboard(deal_id: str, fire: int = 0, poop: int = 0) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
+def vote_keyboard(deal_id: str, fire: int = 0, poop: int = 0, store_url: str = None, store_name: str = None) -> InlineKeyboardMarkup:
+    rows = []
+    if store_url and store_name:
+        rows.append([InlineKeyboardButton(text=f"� Открыть в {stoore_name}", url=store_url)])
+    rows.append([
         InlineKeyboardButton(text=f"🔥 {fire}", callback_data=f"vote:fire:{deal_id}"),
         InlineKeyboardButton(text=f"💩 {poop}", callback_data=f"vote:poop:{deal_id}"),
-    ]])
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @dp.callback_query(F.data.startswith("vote:"))
@@ -370,10 +427,24 @@ async def handle_vote(callback: CallbackQuery):
         return
 
     counts = await get_votes(deal_id)
-    # Обновляем кнопки с новыми счётчиками
+    await increment_metric(f"vote_{vote_type}")
+    # Обновляем кнопки с новыми счётчиками, сохраняя кнопку ссылки на магазин
+    store_url = None
+    store_name = None
+    try:
+        existing = callback.message.reply_markup
+        if existing:
+            for row in existing.inline_keyboard:
+                for btn in row:
+                    if getattr(btn, "url", None):
+                        store_url = btn.url
+                        store_name = btn.text.replace("🛒 Открыть в ", "")
+                        break
+    except Exception:
+        pass
     try:
         await callback.message.edit_reply_markup(
-            reply_markup=vote_keyboard(deal_id, counts["fire"], counts["poop"])
+            reply_markup=vote_keyboard(deal_id, counts["fire"], counts["poop"], store_url, store_name)
         )
     except Exception:
         pass
@@ -530,6 +601,8 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
     new_price = await _localize_price(deal.new_price)
 
     lines = []
+
+    # Заголовок
     if deal.is_free:
         lines.append(f"🎁 <b>БЕСПЛАТНО · {now}</b>")
     elif is_historic:
@@ -537,26 +610,33 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
     else:
         lines.append(f"{theme_emoji} <b>{theme_name.upper()} · {now}</b>")
 
-    lines.append(f"\n{store_emoji} <b>{esc(deal.title)}</b>")
-    lines.append("━━━━━━━━━━━━━━")
+    # Название игры
+    lines.append(f"{store_emoji} <b>{esc(deal.title)}</b>")
+    lines.append("")
 
+    # Цена
     if deal.is_free:
         lines.append("💸 <s>Платная</s>  →  🆓 <b>БЕСПЛАТНО</b>")
     else:
-        lines.append(f"💸 <s>{esc(old_price)}</s>  ➔  ✅ <b>{esc(new_price)}</b>")
-        lines.append(f"🏷 Скидка: <b>−{deal.discount}%</b>")
+        lines.append(f"💸 <s>{esc(old_price)}</s>  →  ✅ <b>{esc(new_price)}</b>  <b>−{deal.discount}%</b>")
 
     if getattr(deal, "sale_end", None):
-        lines.append(f"⏳ Скидка до: <b>{deal.sale_end}</b>")
+        lines.append(f"⏳ До: <b>{deal.sale_end}</b>")
 
+    # Рейтинг
     if rating:
-        lines.append(f"📊 Steam: <b>{rating['score']}%</b>  {esc(rating['label'])}")
+        score_line = f"⭐️ Steam: <b>{rating['score']}%</b>"
+        if rating.get("label"):
+            score_line += f"  ·  {esc(rating['label'])}"
+        lines.append(score_line)
     elif igdb_info and igdb_info.get("rating"):
-        lines.append(f"📊 IGDB: <b>{igdb_info['rating']}/100</b>")
+        lines.append(f"⭐️ IGDB: <b>{igdb_info['rating']}/100</b>")
 
+    # Комментарий
     comment = generate_comment(deal, rating)
-    lines.append(f"\n📝 <i>{esc(comment)}</i>")
+    lines.append(f"\n� <i>{esc(comment)}</i>")
 
+    # Хэштеги
     hashtags = genres_to_hashtags(deal.genres)
     if hashtags:
         lines.append(f"\n{hashtags}")
@@ -604,9 +684,11 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
             await send_with_retry(lambda: bot.send_message(CHANNEL_ID, text, reply_markup=keyboard, disable_web_page_preview=True))
 
         log.info(f"Опубликовано: {deal.title}")
+        await increment_metric("published")
         return True
     except Exception as e:
         log.error(f"Ошибка при отправке {deal.title}: {e}")
+        await increment_metric("publish_error")
         return False
 
 
@@ -637,15 +719,18 @@ async def notify_wishlist_users(deal):
         try:
             await bot.send_message(user_id, text, reply_markup=keyboard)
             log.info(f"Wishlist уведомление отправлено user_id={user_id} для '{deal.title}'")
+            await increment_metric("wishlist_notify")
         except TelegramRetryAfter as e:
             log.warning(f"Flood control, ждём {e.retry_after}s для user_id={user_id}")
             await asyncio.sleep(e.retry_after)
             try:
                 await bot.send_message(user_id, text, reply_markup=keyboard)
+                await increment_metric("wishlist_notify")
             except Exception as retry_err:
                 log.warning(f"Повторная попытка не удалась user_id={user_id}: {retry_err}")
         except TelegramForbiddenError:
-            log.info(f"Пользователь заблокировал бота user_id={user_id}, пропускаем")
+            log.info(f"Пользователь заблокировал бота user_id={user_id}, удаляем из вишлиста")
+            await wishlist_remove_user(user_id)
         except Exception as e:
             log.warning(f"Не удалось отправить уведомление user_id={user_id}: {e}")
         await asyncio.sleep(0.05)
@@ -806,6 +891,7 @@ async def check_and_post():
 
     filtered = []
     rating_cache: dict[str, Optional[dict]] = {}
+    igdb_ids_seen: set[int] = set()
     for deal in all_deals:
         if await is_already_posted(deal.deal_id):
             continue
@@ -815,6 +901,19 @@ async def check_and_post():
             rating_cache[deal.deal_id] = rating
             if rating and rating["score"] < MIN_STEAM_RATING:
                 log.info(f"Пропущено (рейтинг {rating['score']}%): {deal.title}")
+                continue
+        # Дедупликация по IGDB ID
+        igdb_info = await get_game_info(deal.title)
+        if igdb_info:
+            igdb_id = igdb_info.get("igdb_id")
+            if igdb_id:
+                if igdb_id in igdb_ids_seen:
+                    log.info(f"Пропущено (дубль IGDB {igdb_id}): {deal.title}")
+                    continue
+                igdb_ids_seen.add(igdb_id)
+            # Фильтр 18+
+            if FILTER_ADULT and igdb_info.get("is_adult"):
+                log.info(f"Пропущено (18+): {deal.title}")
                 continue
         filtered.append(deal)
 
@@ -838,6 +937,8 @@ async def check_and_post():
     deal = combined[0]
     published = await publish_single(deal, prefetched_rating=rating_cache.get(deal.deal_id))
     if published:
+        global _last_post_time
+        _last_post_time = datetime.now(MSK).isoformat()
         await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount)
         await notify_wishlist_users(deal)
         if not deal.is_free:
@@ -858,14 +959,41 @@ async def notify_admin(text: str):
 
 # ─── Keep-alive HTTP сервер для Render ───────────────────────────────────────
 
+_last_post_time: Optional[str] = None
+
+
 async def handle_ping(request):
     return web.Response(text="OK")
+
+
+async def handle_health(request):
+    """Возвращает JSON со статусом БД и временем последней публикации."""
+    import json
+    db_ok = False
+    try:
+        from database import get_pool
+        pool = await get_pool()
+        await pool.fetchval("SELECT 1")
+        db_ok = True
+    except Exception:
+        pass
+
+    payload = {
+        "status": "ok" if db_ok else "degraded",
+        "db": "ok" if db_ok else "error",
+        "last_post": _last_post_time,
+    }
+    return web.Response(
+        text=json.dumps(payload),
+        content_type="application/json",
+        status=200 if db_ok else 503,
+    )
 
 
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/", handle_ping)
-    app.router.add_get("/health", handle_ping)
+    app.router.add_get("/health", handle_health)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.getenv("PORT", 8080))

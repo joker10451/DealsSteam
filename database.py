@@ -61,6 +61,7 @@ async def init_db():
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_posted_deals_posted_at ON posted_deals(posted_at)"
         )
+        await init_metrics_table(conn)
 
 
 # --- posted_deals ---
@@ -214,3 +215,45 @@ async def get_price_game(deal_id: str) -> int | None:
         "SELECT original_price FROM price_game WHERE deal_id = $1", deal_id
     )
     return row["original_price"] if row else None
+
+
+# --- metrics ---
+
+async def init_metrics_table(conn):
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS metrics (
+            event TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0,
+            date DATE NOT NULL DEFAULT CURRENT_DATE,
+            UNIQUE(event, date)
+        )
+    """)
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_metrics_date ON metrics(date)"
+    )
+
+
+async def increment_metric(event: str, amount: int = 1):
+    pool = await get_pool()
+    await pool.execute("""
+        INSERT INTO metrics (event, count, date) VALUES ($1, $2, CURRENT_DATE)
+        ON CONFLICT (event, date) DO UPDATE SET count = metrics.count + $2
+    """, event, amount)
+
+
+async def get_metrics_summary(days: int = 7) -> list[dict]:
+    pool = await get_pool()
+    rows = await pool.fetch("""
+        SELECT event, SUM(count) as total
+        FROM metrics
+        WHERE date >= CURRENT_DATE - $1::int
+        GROUP BY event
+        ORDER BY total DESC
+    """, days)
+    return [dict(r) for r in rows]
+
+
+async def wishlist_remove_user(user_id: int):
+    """Удаляет все записи пользователя из вишлиста (при блокировке бота)."""
+    pool = await get_pool()
+    await pool.execute("DELETE FROM wishlist WHERE user_id = $1", user_id)

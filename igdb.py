@@ -76,7 +76,7 @@ async def get_game_info(title: str) -> Optional[dict]:
         f'search "{title}"; '
         f'fields name, summary, rating, cover.url, '
         f'screenshots.url, genres.name, hypes, '
-        f'aggregated_rating, total_rating; '
+        f'aggregated_rating, total_rating, age_ratings.rating, id; '
         f'where version_parent = null; '
         f'limit 1;'
     )
@@ -122,12 +122,18 @@ async def get_game_info(title: str) -> Optional[dict]:
     # Жанры
     genres = [g["name"] for g in game.get("genres", [])[:3]]
 
+    # Возрастной рейтинг: PEGI 18 = 4, ESRB AO = 4 (по IGDB enum)
+    age_ratings = game.get("age_ratings", [])
+    is_adult = any(r.get("rating") in (4, 6) for r in age_ratings)
+
     result = {
         "description": description,
         "rating": rating,
         "cover_url": cover_url,
         "screenshots": screenshots,
         "genres": genres,
+        "igdb_id": game.get("id"),
+        "is_adult": is_adult,
     }
     _game_cache[cache_key] = (result, time.time() + _GAME_CACHE_TTL)
     return result
