@@ -154,7 +154,7 @@ async def tutorial_navigation(callback: CallbackQuery):
             await callback.answer("❌ Туториал не найден. Используй /tutorial")
             return
         
-        has_referral = progress.get('current_step', 0) > 4  # Если больше 4 шагов, значит есть реферал
+        has_referral = progress.get('has_referral', False)
         
         # Обрабатываем действия
         if action == "next":

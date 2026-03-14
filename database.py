@@ -351,11 +351,16 @@ async def init_onboarding_tables(conn):
             user_id BIGINT PRIMARY KEY,
             current_step INT DEFAULT 0,
             status TEXT DEFAULT 'in_progress',
+            has_referral BOOLEAN DEFAULT FALSE,
             completed_at TIMESTAMPTZ,
             skipped_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW()
         )
+    """)
+    # Миграция для существующих БД
+    await conn.execute("""
+        ALTER TABLE onboarding_progress ADD COLUMN IF NOT EXISTS has_referral BOOLEAN DEFAULT FALSE
     """)
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS onboarding_hints (
@@ -374,19 +379,10 @@ async def init_onboarding_tables(conn):
 # --- onboarding progress ---
 
 async def get_onboarding_progress(user_id: int) -> dict | None:
-    """
-    Получить прогресс онбординга пользователя.
-    
-    Args:
-        user_id: Telegram user ID
-        
-    Returns:
-        Dict with progress data if exists, None otherwise
-    """
     try:
         pool = await get_pool()
         row = await pool.fetchrow(
-            "SELECT user_id, current_step, status, completed_at, skipped_at, created_at, updated_at "
+            "SELECT user_id, current_step, status, has_referral, completed_at, skipped_at, created_at, updated_at "
             "FROM onboarding_progress WHERE user_id = $1",
             user_id,
         )
@@ -398,21 +394,13 @@ async def get_onboarding_progress(user_id: int) -> dict | None:
         return None
 
 
-async def create_onboarding_progress(user_id: int) -> bool:
-    """
-    Создать запись прогресса онбординга для пользователя.
-    
-    Args:
-        user_id: Telegram user ID
-        
-    Returns:
-        True on success, False if already exists or on error
-    """
+async def create_onboarding_progress(user_id: int, has_referral: bool = False) -> bool:
     try:
         pool = await get_pool()
         await pool.execute(
-            "INSERT INTO onboarding_progress (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
-            user_id,
+            "INSERT INTO onboarding_progress (user_id, has_referral) VALUES ($1, $2) "
+            "ON CONFLICT (user_id) DO NOTHING",
+            user_id, has_referral,
         )
         return True
     except Exception as e:

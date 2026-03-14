@@ -140,23 +140,11 @@ async def is_new_user(user_id: int) -> bool:
 
 
 async def start_tutorial(user_id: int, has_referral: bool = False) -> Dict:
-    """
-    Начать туториал для пользователя.
-    
-    Args:
-        user_id: Telegram user ID
-        has_referral: Whether user came from referral link
-        
-    Returns:
-        Dict with tutorial step content and metadata
-    """
     from database import create_onboarding_progress, update_onboarding_step
     
-    # Create onboarding progress record
-    await create_onboarding_progress(user_id)
+    await create_onboarding_progress(user_id, has_referral=has_referral)
     await update_onboarding_step(user_id, 0)
     
-    # Return step 0 content
     return await get_tutorial_step(user_id, 0, has_referral)
 
 
