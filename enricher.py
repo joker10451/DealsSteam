@@ -110,6 +110,7 @@ def generate_comment(deal: Deal, rating: Optional[dict]) -> str:
     import random
     score = rating["score"] if rating else 0
     genres = deal.genres
+    discount = deal.discount
 
     if deal.is_free:
         return random.choice([
@@ -118,12 +119,29 @@ def generate_comment(deal: Deal, rating: Optional[dict]) -> str:
             "Халява. Долго не думай.",
             "Бесплатно сегодня — платно завтра. Успевай.",
         ])
+    
+    # Огромная скидка (90%+)
+    if discount >= 90:
+        return random.choice([
+            f"Скидка {discount}% — почти даром. Брать не раздумывая.",
+            f"Такие скидки бывают раз в год. {discount}% — это почти подарок.",
+            f"Цена смешная — всего {discount}% от полной. Берём.",
+        ])
+    
+    # Очень большая скидка (80-89%)
+    if discount >= 80:
+        if score >= 85:
+            return f"Огонь-скидка {discount}% на игру с высоким рейтингом. Однозначно брать."
+        return f"Скидка {discount}% — отличная цена. Стоит взять."
+    
+    # Высокий рейтинг
     if score >= 95:
         if "Инди" in genres or "Indie" in genres:
             return "Инди с культовым рейтингом. Такое бывает редко — брать."
         if "RPG" in genres or "Ролевые" in genres:
             return "Один из лучших RPG по мнению сообщества. Не проходи мимо."
         return "Один из лучших в жанре. Брать не раздумывая."
+    
     if score >= 85:
         if "Инди" in genres or "Indie" in genres:
             return "Инди с высоким рейтингом — редкость. Брать."
@@ -131,11 +149,21 @@ def generate_comment(deal: Deal, rating: Optional[dict]) -> str:
             return "Высокий рейтинг для хоррора — значит реально пугает. Бери."
         if "Стратегия" in genres or "Strategy" in genres:
             return "Сообщество стратегов довольно. Хороший выбор на вечер."
+        if discount >= 70:
+            return f"Высокий рейтинг + скидка {discount}%. Хороший выбор."
         return "Высокий рейтинг — сообщество довольно. Хороший выбор."
+    
     if score >= 70:
         if "Экшен" in genres or "Action" in genres:
             return "Крепкий экшен. Фанатам жанра зайдёт."
+        if discount >= 75:
+            return f"Крепкий середняк со скидкой {discount}%. Фанатам жанра зайдёт."
         return "Крепкий середняк. Фанатам жанра зайдёт."
+    
+    # Без рейтинга, но большая скидка
+    if discount >= 75:
+        return f"Скидка {discount}% — цена привлекательная. Стоит глянуть."
+    
     if "RPG" in genres or "Ролевые" in genres:
         return "Для любителей RPG — стоит посмотреть."
     if "Экшен" in genres or "Action" in genres:

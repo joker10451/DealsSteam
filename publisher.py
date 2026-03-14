@@ -124,52 +124,73 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
 
     lines = []
     adult_prefix = "🔞 " if (igdb_info and igdb_info.get("is_adult")) else ""
+    
+    # Заголовок с улучшенным форматированием
     if deal.is_free:
         lines.append(f"🎁 <b>{adult_prefix}БЕСПЛАТНО · {now}</b>")
     elif is_historic:
         lines.append(f"⚡️ <b>{adult_prefix}ИСТОРИЧЕСКИЙ МИНИМУМ · {now}</b>")
+    elif deal.discount >= 80:
+        lines.append(f"🔥 <b>{adult_prefix}ОГОНЬ-СКИДКА · {now}</b>")
     else:
         lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
 
-    lines.append(f"\n{store_emoji} <b>{esc(deal.title)}</b>  <i>· {esc(deal.store)}</i>")
+    # Название игры с пояснением для бандлов
+    title_line = f"{store_emoji} <b>{esc(deal.title)}</b>"
+    if "bundle" in deal.title.lower():
+        title_line += " 📦"
+    lines.append(f"\n{title_line}")
     lines.append("━━━━━━━━━━━━━━")
 
+    # Цена с улучшенным форматированием
     if deal.is_free:
         lines.append("💸 <s>Платная</s>  →  🆓 <b>БЕСПЛАТНО</b>")
     else:
-        lines.append(f"💸 <s>{esc(old_price)}</s>  →  ✅ <b>{esc(new_price)}</b>  <b>−{deal.discount}%</b>")
+        discount_emoji = "🔥" if deal.discount >= 80 else "💰"
+        lines.append(f"{discount_emoji} <s>{esc(old_price)}</s>  →  ✅ <b>{esc(new_price)}</b>")
+        lines.append(f"🏷 Скидка: <b>−{deal.discount}%</b>")
 
     if getattr(deal, "sale_end", None):
         lines.append(f"⏳ До: <b>{deal.sale_end}</b>")
 
+    # Рейтинг с улучшенным форматированием
     if rating:
-        score_line = f"⭐️ Steam: <b>{rating['score']}%</b>"
+        score = rating['score']
+        score_emoji = "🏆" if score >= 95 else "👍" if score >= 80 else "🙂" if score >= 70 else "😐"
+        score_line = f"{score_emoji} Steam: <b>{score}%</b>"
         if rating.get("label"):
             score_line += f"  ·  {esc(rating['label'])}"
         if rating.get("total"):
-            score_line += f"  ·  {rating['total']:,} отзывов".replace(",", " ")
+            reviews_count = f"{rating['total']:,}".replace(",", " ")
+            score_line += f"  ·  {reviews_count} отзывов"
         lines.append(score_line)
     elif igdb_info and igdb_info.get("rating"):
-        lines.append(f"⭐️ IGDB: <b>{igdb_info['rating']}/100</b>")
+        igdb_rating = igdb_info['rating']
+        rating_emoji = "🏆" if igdb_rating >= 90 else "⭐️"
+        lines.append(f"{rating_emoji} IGDB: <b>{igdb_rating}/100</b>")
 
     if historical_low and historical_low.get("price"):
         low_rub = await to_rubles(float(historical_low["price"]), "USD")
         if low_rub:
             lines.append(f"📉 Истор. минимум: <b>{format_rub(low_rub)}</b>")
 
+    # Описание игры
     if igdb_info and igdb_info.get("description"):
         lines.append(f"\n📖 <i>{esc(igdb_info['description'])}</i>")
 
+    # Комментарий бота
     comment = generate_comment(deal, rating)
-    lines.append(f"\n📝 <i>{esc(comment)}</i>")
+    lines.append(f"\n💬 <i>{esc(comment)}</i>")
 
+    # Хештеги
     hashtags = genres_to_hashtags(deal.genres)
     if hashtags:
         lines.append(f"\n{hashtags}")
 
+    # Похожие игры
     if igdb_info and igdb_info.get("similar_games"):
-        similar = ", ".join(igdb_info["similar_games"])
-        lines.append(f"🔗 Похожие: <i>{esc(similar)}</i>")
+        similar = ", ".join(igdb_info["similar_games"][:3])  # Только 3 игры
+        lines.append(f"\n🔗 Похожие: <i>{esc(similar)}</i>")
 
     text = "\n".join(lines)
 

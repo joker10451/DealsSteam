@@ -140,3 +140,108 @@ async def cmd_top(message: Message):
         "\n".join(lines),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
+
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message):
+    """Показать статистику канала."""
+    from database import get_pool
+    from datetime import datetime, timedelta
+    import pytz
+    
+    MSK = pytz.timezone("Europe/Moscow")
+    now = datetime.now(MSK)
+    week_ago = now - timedelta(days=7)
+    
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Всего опубликовано за неделю
+        total_posts = await conn.fetchval(
+            "SELECT COUNT(*) FROM posted_deals WHERE posted_at >= $1",
+            week_ago
+        )
+        
+        # Средняя скидка
+        avg_discount = await conn.fetchval(
+            "SELECT AVG(discount) FROM posted_deals WHERE posted_at >= $1 AND discount > 0",
+            week_ago
+        )
+        
+        # Максимальная скидка
+        max_discount = await conn.fetchval(
+            "SELECT MAX(discount) FROM posted_deals WHERE posted_at >= $1",
+            week_ago
+        )
+        
+        # Бесплатных раздач
+        free_games = await conn.fetchval(
+            "SELECT COUNT(*) FROM posted_deals WHERE posted_at >= $1 AND discount = 100",
+            week_ago
+        )
+        
+        # Топ по голосам
+        top_voted = await conn.fetch(
+            """
+            SELECT deal_id, COUNT(*) as votes 
+            FROM votes 
+            WHERE vote_type = 'fire' AND voted_at >= $1
+            GROUP BY deal_id 
+            ORDER BY votes DESC 
+            LIMIT 3
+            """,
+            week_ago
+        )
+        
+        # Активных пользователей вишлиста
+        wishlist_users = await conn.fetchval(
+            "SELECT COUNT(DISTINCT user_id) FROM wishlist"
+        )
+    
+    lines = [
+        "📊 <b>Статистика канала за неделю</b>\n",
+        f"📝 Опубликовано скидок: <b>{total_posts or 0}</b>",
+        f"💰 Средняя скидка: <b>{int(avg_discount or 0)}%</b>",
+        f"🔥 Максимальная скидка: <b>{int(max_discount or 0)}%</b>",
+        f"🎁 Бесплатных раздач: <b>{free_games or 0}</b>",
+        f"👥 Пользователей вишлиста: <b>{wishlist_users or 0}</b>",
+    ]
+    
+    if top_voted:
+        lines.append("\n🏆 <b>Топ по голосам:</b>")
+        for i, row in enumerate(top_voted, 1):
+            lines.append(f"{i}. {row['deal_id'][:30]} — {row['votes']} 🔥")
+    
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message):
+    """Показать список всех команд."""
+    help_text = """
+🤖 <b>Команды бота GameDeals Radar</b>
+
+<b>Вишлист:</b>
+• Напиши название игры — добавлю в вишлист
+• /wishlist — посмотреть список (до 20 игр)
+• /remove [название] — удалить из вишлиста
+• /cancel — отменить добавление
+
+<b>Поиск скидок:</b>
+• /top — топ-5 скидок прямо сейчас
+• /find [тег] — найти по жанру (coop, rpg, horror...)
+• /price [ссылка или название] — цены по регионам Steam
+
+<b>Статистика:</b>
+• /stats — статистика канала за неделю
+
+<b>Помощь:</b>
+• /help — показать это сообщение
+
+━━━━━━━━━━━━━━
+
+📢 Канал: @ваш_канал
+💬 Вопросы: @Joker104_97
+"""
+    await message.answer(help_text)
+
+
