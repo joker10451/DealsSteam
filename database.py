@@ -127,6 +127,7 @@ async def init_db():
         await init_metrics_table(conn)
         await init_genre_table(conn)
         await init_onboarding_tables(conn)
+        await init_notification_tables(conn)
     
     # Инициализация таблиц мини-игр
     from minigames import init_minigames_db
@@ -974,3 +975,108 @@ async def free_game_get_subscribers() -> list[int]:
         "SELECT user_id FROM free_game_subs ORDER BY subscribed_at"
     )
     return [row["user_id"] for row in rows]
+
+
+# --- notification settings ---
+
+async def init_notification_tables(conn):
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_notification_settings (
+            user_id BIGINT PRIMARY KEY,
+            min_discount INTEGER DEFAULT 0,
+            quiet_start INTEGER DEFAULT 23,
+            quiet_end INTEGER DEFAULT 8,
+            grouping_enabled BOOLEAN DEFAULT FALSE,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS notification_queue (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            deal_id TEXT NOT NULL,
+            deal_title TEXT NOT NULL,
+            deal_store TEXT NOT NULL,
+            deal_old_price TEXT NOT NULL,
+            deal_new_price TEXT NOT NULL,
+            deal_discount INTEGER NOT NULL,
+            deal_link TEXT NOT NULL,
+            deal_is_free BOOLEAN DEFAULT FALSE,
+            queued_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(user_id, deal_id)
+        )
+    """)
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notif_queue_user_id ON notification_queue(user_id)"
+    )
+
+
+async def notif_settings_get(user_id: int) -> dict:
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT min_discount, quiet_start, quiet_end, grouping_enabled "
+        "FROM user_notification_settings WHERE user_id = $1",
+        user_id,
+    )
+    if row:
+        return dict(row)
+    return {"min_discount": 0, "quiet_start": 23, "quiet_end": 8, "grouping_enabled": False}
+
+
+async def notif_settings_set(user_id: int, **kwargs):
+    pool = await get_pool()
+    # Upsert with only provided fields
+    current = await notif_settings_get(user_id)
+    current.update(kwargs)
+    await pool.execute(
+        """
+        INSERT INTO user_notification_settings
+            (user_id, min_discount, quiet_start, quiet_end, grouping_enabled, updated_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (user_id) DO UPDATE SET
+            min_discount = $2, quiet_start = $3, quiet_end = $4,
+            grouping_enabled = $5, updated_at = NOW()
+        """,
+        user_id,
+        current["min_discount"],
+        current["quiet_start"],
+        current["quiet_end"],
+        current["grouping_enabled"],
+    )
+
+
+async def notif_queue_add(user_id: int, deal) -> bool:
+    pool = await get_pool()
+    try:
+        await pool.execute(
+            """
+            INSERT INTO notification_queue
+                (user_id, deal_id, deal_title, deal_store, deal_old_price,
+                 deal_new_price, deal_discount, deal_link, deal_is_free)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (user_id, deal_id) DO NOTHING
+            """,
+            user_id, deal.deal_id, deal.title, deal.store,
+            str(deal.old_price), str(deal.new_price),
+            deal.discount, deal.link, deal.is_free,
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def notif_queue_pop(user_id: int) -> list[dict]:
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "DELETE FROM notification_queue WHERE user_id = $1 RETURNING *",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def notif_queue_get_users_with_pending() -> list[int]:
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT DISTINCT user_id FROM notification_queue"
+    )
+    return [r["user_id"] for r in rows]

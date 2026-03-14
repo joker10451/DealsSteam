@@ -18,6 +18,7 @@ from scheduler import (
     check_and_post, post_weekly_digest, post_hidden_gems, run_parser_tests,
     sync_all_steam_wishlists, sync_all_steam_libraries
 )
+from publisher import flush_notification_queue
 from free_game_monitor import check_epic_free_games, check_gog_free_games
 from database import price_cache_cleanup
 from server import start_web_server, self_ping
@@ -73,6 +74,10 @@ async def main():
         BotCommand(command="steamstatus", description="Статус Steam интеграции"),
         BotCommand(command="steamdisconnect", description="Отключить Steam"),
         BotCommand(command="freenotify", description="Уведомления о бесплатных играх"),
+        BotCommand(command="notify_settings", description="Настройки уведомлений вишлиста"),
+        BotCommand(command="min_discount", description="Мин. скидка для уведомлений"),
+        BotCommand(command="quiet_hours", description="Тихие часы (не беспокоить)"),
+        BotCommand(command="group_notify", description="Группировать уведомления"),
         BotCommand(command="games", description="Мини-игры"),
         BotCommand(command="score", description="Мои баллы"),
         BotCommand(command="leaderboard", description="Таблица лидеров"),
@@ -177,6 +182,13 @@ async def main():
         name="price_cache_cleanup"
     )
     log.info("Очистка кеша цен: каждый день в 04:00 МСК")
+
+    scheduler.add_job(
+        flush_notification_queue,
+        CronTrigger(minute=0, timezone=MSK),  # каждый час в :00
+        name="flush_notif_queue"
+    )
+    log.info("Flush очереди уведомлений: каждый час")
 
     if os.getenv("RENDER_EXTERNAL_URL"):
         scheduler.add_job(self_ping, "interval", minutes=10, name="self_ping")

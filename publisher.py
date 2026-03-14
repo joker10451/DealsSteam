@@ -16,6 +16,7 @@ from config import CHANNEL_ID, ADMIN_ID
 from database import (
     get_wishlist_matches, save_price_game,
     increment_metric, wishlist_remove_user,
+    notif_settings_get, notif_queue_add,
 )
 from enricher import get_steam_rating, get_historical_low, generate_comment, genres_to_hashtags
 from igdb import get_game_info
@@ -308,47 +309,64 @@ async def notify_users(user_ids: list[int], deal, header: str):
 async def notify_wishlist_users(deal):
     """
     Notifies users who have the game in their wishlist.
+    Respects per-user notification settings: min discount, quiet hours, grouping.
     Filters out users who own the game in their Steam library.
-    
-    Requirements: 2.7
     """
     from database import steam_library_contains
-    
+
     user_ids = await get_wishlist_matches(deal.title)
     if not user_ids:
         return
-    
+
     # Filter out users who own the game in their Steam library
-    # Only check for Steam games
     if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
         try:
             appid = int(deal.deal_id.replace("steam_", ""))
-            filtered_user_ids = []
-            
-            for user_id in user_ids:
-                # Check if user owns this game
-                owns_game = await steam_library_contains(user_id, appid)
-                
-                if owns_game:
-                    log.info(
-                        f"Skipping wishlist notification for user {user_id}: "
-                        f"already owns {deal.title} (appid {appid})"
-                    )
+            filtered = []
+            for uid in user_ids:
+                if not await steam_library_contains(uid, appid):
+                    filtered.append(uid)
                 else:
-                    filtered_user_ids.append(user_id)
-            
-            user_ids = filtered_user_ids
-        
+                    log.info(f"Skipping wishlist notify user {uid}: owns {deal.title}")
+            user_ids = filtered
         except (ValueError, TypeError) as e:
             log.warning(f"Failed to parse Steam appid from {deal.deal_id}: {e}")
-            # Continue with original user_ids if parsing fails
-    
+
     if not user_ids:
-        log.info(f"No users to notify for {deal.title} (all own the game)")
         return
-    
-    await notify_users(user_ids, deal, "🔔 <b>Скидка на игру из твоего вишлиста!</b>")
-    await increment_metric("wishlist_notify", len(user_ids))
+
+    now_msk = datetime.now(MSK)
+    current_hour = now_msk.hour
+    send_now = []
+    queued = 0
+
+    for uid in user_ids:
+        settings = await notif_settings_get(uid)
+
+        # Фильтр по минимальной скидке
+        if not deal.is_free and deal.discount < settings["min_discount"]:
+            log.info(f"Skipping notify user {uid}: discount {deal.discount}% < min {settings['min_discount']}%")
+            continue
+
+        # Тихие часы
+        qs, qe = settings["quiet_start"], settings["quiet_end"]
+        in_quiet = (
+            (qs > qe and (current_hour >= qs or current_hour < qe)) or
+            (qs <= qe and qs <= current_hour < qe)
+        )
+
+        if in_quiet or settings["grouping_enabled"]:
+            await notif_queue_add(uid, deal)
+            queued += 1
+        else:
+            send_now.append(uid)
+
+    if send_now:
+        await notify_users(send_now, deal, "🔔 <b>Скидка на игру из твоего вишлиста!</b>")
+        await increment_metric("wishlist_notify", len(send_now))
+
+    if queued:
+        log.info(f"Queued wishlist notification for {queued} users (quiet hours or grouping)")
 
 
 async def send_price_game(deal) -> None:
@@ -467,3 +485,89 @@ async def publish_screenshot_game(deal, igdb_info):
         log.info(f"Опубликована игра со скриншотом: {deal.title}")
     except Exception as e:
         log.warning(f"Игра со скриншотом не отправлена: {e}")
+
+
+async def flush_notification_queue():
+    """
+    Отправляет накопленные уведомления пользователям, у которых закончились тихие часы.
+    Вызывается по расписанию каждый час.
+    """
+    from database import (
+        notif_queue_get_users_with_pending,
+        notif_queue_pop,
+        notif_settings_get,
+    )
+
+    user_ids = await notif_queue_get_users_with_pending()
+    if not user_ids:
+        return
+
+    now_msk = datetime.now(MSK)
+    current_hour = now_msk.hour
+    flushed_users = 0
+
+    for uid in user_ids:
+        settings = await notif_settings_get(uid)
+        qs, qe = settings["quiet_start"], settings["quiet_end"]
+        in_quiet = (
+            (qs > qe and (current_hour >= qs or current_hour < qe)) or
+            (qs <= qe and qs <= current_hour < qe)
+        )
+        # Если группировка включена — отправляем только вне тихих часов
+        if in_quiet:
+            continue
+
+        deals_data = await notif_queue_pop(uid)
+        if not deals_data:
+            continue
+
+        if len(deals_data) == 1:
+            # Одна сделка — обычное уведомление
+            d = deals_data[0]
+            store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(d["deal_store"], "🕹")
+            price_line = "🆓 <b>БЕСПЛАТНО</b>" if d["deal_is_free"] else (
+                f"<s>{esc(d['deal_old_price'])}</s> → <b>{esc(d['deal_new_price'])}</b> "
+                f"<code>-{d['deal_discount']}%</code>"
+            )
+            text = (
+                f"🔔 <b>Скидка на игру из твоего вишлиста!</b>\n\n"
+                f"{store_emoji} <b>{esc(d['deal_title'])}</b>\n"
+                f"🏪 {esc(d['deal_store'])}\n"
+                f"{price_line}\n\n"
+                f"<a href='{d['deal_link']}'>Открыть в {esc(d['deal_store'])}</a>"
+            )
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"🛒 {d['deal_store']}", url=d["deal_link"])]
+            ])
+        else:
+            # Несколько сделок — группируем в одно сообщение
+            lines = [f"🔔 <b>Скидки на {len(deals_data)} игры из твоего вишлиста!</b>\n"]
+            for d in deals_data:
+                store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(d["deal_store"], "🕹")
+                price_part = "🆓 БЕСПЛАТНО" if d["deal_is_free"] else f"-{d['deal_discount']}%"
+                lines.append(
+                    f"{store_emoji} <a href='{d['deal_link']}'>{esc(d['deal_title'])}</a> "
+                    f"— <b>{price_part}</b>"
+                )
+            text = "\n".join(lines)
+            keyboard = None
+
+        try:
+            await get_bot().send_message(
+                uid, text,
+                reply_markup=keyboard,
+                disable_web_page_preview=True,
+            )
+            flushed_users += 1
+        except TelegramForbiddenError:
+            log.info(f"Пользователь {uid} заблокировал бота, удаляем из вишлиста")
+            await wishlist_remove_user(uid)
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after)
+        except Exception as e:
+            log.warning(f"Ошибка отправки очереди user_id={uid}: {e}")
+        await asyncio.sleep(0.05)
+
+    if flushed_users:
+        log.info(f"Flush очереди уведомлений: отправлено {flushed_users} пользователям")
+        await increment_metric("wishlist_notify_flushed", flushed_users)
