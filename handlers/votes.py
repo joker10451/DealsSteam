@@ -60,10 +60,25 @@ async def handle_price_game(callback: CallbackQuery):
         await callback.answer("Игра уже закончилась!", show_alert=False)
         return
 
-    if chosen == correct:
-        await callback.answer(f"✅ Правильно! Цена была {correct}₽", show_alert=True)
+    is_correct = (chosen == correct)
+    
+    # Начисляем баллы за игру
+    from minigames import add_score
+    user_id = callback.from_user.id
+    points = 5 if is_correct else 0
+    new_achievements = await add_score(user_id, points, is_correct)
+    
+    # Формируем ответ
+    if is_correct:
+        answer_text = f"✅ Правильно! Цена была {correct}₽\n+{points} баллов"
     else:
-        await callback.answer(f"❌ Неверно. Правильный ответ: {correct}₽", show_alert=True)
+        answer_text = f"❌ Неверно. Правильный ответ: {correct}₽"
+    
+    # Если есть новые достижения, добавляем их
+    if new_achievements:
+        answer_text += f"\n\n🏆 Новое достижение!\n{new_achievements[0]['name']}"
+    
+    await callback.answer(answer_text, show_alert=True)
 
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
