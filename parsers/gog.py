@@ -55,7 +55,10 @@ async def _fetch_with_retry(url: str, retries: int = 3, delay: float = 2.0):
 
 
 async def get_gog_deals(min_discount: int = 50) -> list[Deal]:
-    data = await _fetch_with_retry(GOG_API_URL)
+    try:
+        data = await _fetch_with_retry(GOG_API_URL)
+    except Exception:
+        return []
     if not data:
         return []
 

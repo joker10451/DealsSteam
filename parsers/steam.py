@@ -62,7 +62,10 @@ async def _fetch_with_retry(url: str, retries: int = 3, delay: float = 2.0) -> O
 
 
 async def get_steam_deals(min_discount: int = 50) -> list[Deal]:
-    html = await _fetch_with_retry(STEAM_SEARCH_URL)
+    try:
+        html = await _fetch_with_retry(STEAM_SEARCH_URL)
+    except Exception:
+        return []
     if not html:
         return []
 

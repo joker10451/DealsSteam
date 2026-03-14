@@ -31,7 +31,10 @@ def _fmt(kopecks: int) -> str:
 
 
 async def get_epic_deals(min_discount: int = 50) -> list[Deal]:
-    data = await _fetch_with_retry(EPIC_FREE_URL)
+    try:
+        data = await _fetch_with_retry(EPIC_FREE_URL)
+    except Exception:
+        return []
     if not data:
         return []
 

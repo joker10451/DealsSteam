@@ -788,6 +788,20 @@ async def start_web_server():
     log.info(f"HTTP сервер запущен на порту {port}")
 
 
+async def self_ping():
+    """Пингует собственный URL чтобы Render не засыпал на Free плане."""
+    render_url = os.getenv("RENDER_EXTERNAL_URL")
+    if not render_url:
+        return
+    try:
+        import aiohttp as _aiohttp
+        async with _aiohttp.ClientSession() as s:
+            async with s.get(f"{render_url}/health", timeout=_aiohttp.ClientTimeout(total=10)) as r:
+                log.debug(f"Self-ping: {r.status}")
+    except Exception as e:
+        log.debug(f"Self-ping failed: {e}")
+
+
 # ─── Запуск ──────────────────────────────────────────────────────────────────
 
 async def main():
@@ -826,6 +840,11 @@ async def main():
         name="weekly_digest",
     )
     log.info("Еженедельный дайджест: каждое воскресенье в 12:00 МСК")
+
+    # Self-ping каждые 10 минут чтобы Render не засыпал
+    if os.getenv("RENDER_EXTERNAL_URL"):
+        scheduler.add_job(self_ping, "interval", minutes=10, name="self_ping")
+        log.info("Self-ping включён: каждые 10 минут")
 
     scheduler.start()
     log.info("Бот запущен.")

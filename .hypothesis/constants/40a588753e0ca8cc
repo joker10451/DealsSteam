@@ -1,0 +1,4 @@
+# file: E:\kiro\tg kanal skidki\game-deals-bot\igdb.py
+# hypothesis_version: 6.151.9
+
+[200, 3600, '.', '. ', '/', 'Authorization', 'Client-ID', 'access_token', 'aggregated_rating', 'client_credentials', 'client_id', 'client_secret', 'cover', 'cover_url', 'description', 'expires_in', 'genres', 'grant_type', 'http', 'https://', 'name', 'rating', 'screenshots', 'summary', 't_cover_big', 't_screenshot_big', 't_thumb', 'total_rating', 'url']
