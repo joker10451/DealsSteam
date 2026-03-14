@@ -293,8 +293,15 @@ async def notify_genre_subscribers(deal):
     await increment_metric("genre_notify", len(user_ids))
 
 
-async def get_top_deals_now(limit: int = 5) -> list:
-    """Возвращает топ текущих скидок (без публикации)."""
+async def get_top_deals_now(limit: int = 5, user_id: int = None) -> list:
+    """
+    Возвращает топ текущих скидок (без публикации).
+    Если указан user_id, фильтрует игры из Steam библиотеки пользователя.
+    
+    Requirements: 2.5
+    """
+    from database import steam_library_filter_deals
+    
     all_deals = []
     for fetcher in [get_steam_deals, get_gog_deals, get_epic_deals]:
         try:
@@ -313,4 +320,169 @@ async def get_top_deals_now(limit: int = 5) -> list:
         result.append(deal)
 
     result.sort(key=lambda d: d.discount, reverse=True)
-    return result[:limit]
+    result = result[:limit]
+    
+    # Фильтруем игры из библиотеки пользователя, если указан user_id
+    if user_id:
+        result = await steam_library_filter_deals(user_id, result)
+    
+    return result
+
+
+# --- Steam Integration Jobs ---
+
+async def sync_all_steam_wishlists():
+    """
+    Syncs Steam wishlists for all users with wishlist_sync_enabled=true.
+    Runs daily at 06:00 MSK.
+    
+    Requirements: 1.6
+    """
+    from steam_api import fetch_wishlist
+    from database import steam_get_all_synced_users, steam_update_sync_time, wishlist_add
+    
+    log.info("Starting automatic Steam wishlist sync for all users...")
+    
+    try:
+        users = await steam_get_all_synced_users()
+        
+        if not users:
+            log.info("No users with Steam sync enabled")
+            return
+        
+        synced_count = 0
+        error_count = 0
+        total_games = 0
+        
+        for user in users:
+            if not user.get("wishlist_sync_enabled"):
+                continue
+            
+            user_id = user["user_id"]
+            steam_id = user["steam_id"]
+            
+            try:
+                # Fetch wishlist from Steam
+                wishlist_games = await fetch_wishlist(steam_id)
+                
+                if wishlist_games:
+                    # Add games to user's wishlist
+                    games_added = 0
+                    for game in wishlist_games:
+                        added = await wishlist_add(user_id, game["name"])
+                        if added:
+                            games_added += 1
+                    
+                    # Update sync timestamp
+                    await steam_update_sync_time(user_id, "wishlist")
+                    
+                    synced_count += 1
+                    total_games += games_added
+                    
+                    log.info(
+                        f"Synced wishlist for user {user_id}: "
+                        f"{games_added} games from Steam ID {steam_id}"
+                    )
+                else:
+                    log.warning(
+                        f"No wishlist data for user {user_id}, "
+                        f"Steam ID {steam_id} (profile may be private)"
+                    )
+                    error_count += 1
+                
+                # Rate limiting: 2 second delay between users
+                await asyncio.sleep(2)
+            
+            except Exception as e:
+                log.error(
+                    f"Error syncing wishlist for user {user_id}, "
+                    f"Steam ID {steam_id}: {e}"
+                )
+                error_count += 1
+        
+        log.info(
+            f"Steam wishlist sync complete: "
+            f"{synced_count} users synced, {total_games} total games, "
+            f"{error_count} errors"
+        )
+    
+    except Exception as e:
+        log.error(f"Fatal error in sync_all_steam_wishlists: {e}", exc_info=True)
+
+
+async def sync_all_steam_libraries():
+    """
+    Syncs Steam libraries for all users with library_sync_enabled=true.
+    Runs weekly on Monday at 03:00 MSK.
+    
+    Requirements: 2.6
+    """
+    from steam_api import fetch_library
+    from database import (
+        steam_get_all_synced_users, steam_update_sync_time,
+        steam_library_replace
+    )
+    
+    log.info("Starting automatic Steam library sync for all users...")
+    
+    try:
+        users = await steam_get_all_synced_users()
+        
+        if not users:
+            log.info("No users with Steam sync enabled")
+            return
+        
+        synced_count = 0
+        error_count = 0
+        total_games = 0
+        
+        for user in users:
+            if not user.get("library_sync_enabled"):
+                continue
+            
+            user_id = user["user_id"]
+            steam_id = user["steam_id"]
+            
+            try:
+                # Fetch library from Steam
+                library_appids = await fetch_library(steam_id)
+                
+                if library_appids:
+                    # Replace user's library in database
+                    await steam_library_replace(user_id, library_appids)
+                    
+                    # Update sync timestamp
+                    await steam_update_sync_time(user_id, "library")
+                    
+                    synced_count += 1
+                    total_games += len(library_appids)
+                    
+                    log.info(
+                        f"Synced library for user {user_id}: "
+                        f"{len(library_appids)} games from Steam ID {steam_id}"
+                    )
+                else:
+                    log.warning(
+                        f"No library data for user {user_id}, "
+                        f"Steam ID {steam_id} (profile may be private)"
+                    )
+                    error_count += 1
+                
+                # Rate limiting: 2 second delay between users
+                await asyncio.sleep(2)
+            
+            except Exception as e:
+                log.error(
+                    f"Error syncing library for user {user_id}, "
+                    f"Steam ID {steam_id}: {e}"
+                )
+                error_count += 1
+        
+        log.info(
+            f"Steam library sync complete: "
+            f"{synced_count} users synced, {total_games} total games, "
+            f"{error_count} errors"
+        )
+    
+    except Exception as e:
+        log.error(f"Fatal error in sync_all_steam_libraries: {e}", exc_info=True)

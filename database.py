@@ -56,15 +56,58 @@ async def init_db():
                 posted_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS steam_users (
+                user_id BIGINT PRIMARY KEY,
+                steam_id TEXT NOT NULL,
+                wishlist_sync_enabled BOOLEAN DEFAULT TRUE,
+                library_sync_enabled BOOLEAN DEFAULT TRUE,
+                last_wishlist_sync TIMESTAMPTZ,
+                last_library_sync TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS steam_library (
+                user_id BIGINT NOT NULL,
+                appid INTEGER NOT NULL,
+                UNIQUE(user_id, appid)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_cache (
+                game_title TEXT PRIMARY KEY,
+                prices JSONB NOT NULL,
+                cached_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS free_game_subs (
+                user_id BIGINT PRIMARY KEY,
+                subscribed_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
         # Индексы для ускорения частых запросов
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_wishlist_user_id ON wishlist(user_id)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_steam_users_steam_id ON steam_users(steam_id)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_steam_library_user_id ON steam_library(user_id)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_steam_library_appid ON steam_library(appid)"
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_votes_deal_id ON votes(deal_id)"
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_posted_deals_posted_at ON posted_deals(posted_at)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_price_cache_cached_at ON price_cache(cached_at)"
         )
         await init_metrics_table(conn)
         await init_genre_table(conn)
@@ -335,3 +378,298 @@ async def get_all_genre_subscribers_for_deal(genres: list[str]) -> list[int]:
         genres_lower,
     )
     return [r["user_id"] for r in rows]
+
+
+# --- steam integration ---
+
+async def steam_link_account(user_id: int, steam_id: str) -> bool:
+    """
+    Links a Steam account to a user.
+    Returns True on success, False if already linked (duplicate).
+    """
+    pool = await get_pool()
+    try:
+        await pool.execute(
+            "INSERT INTO steam_users (user_id, steam_id) VALUES ($1, $2)",
+            user_id, steam_id,
+        )
+        return True
+    except asyncpg.UniqueViolationError:
+        return False
+
+
+async def steam_unlink_account(user_id: int) -> bool:
+    """
+    Unlinks a Steam account and deletes all associated data.
+    Deletes from steam_users and steam_library for the given user_id.
+    Returns True if any records were deleted.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Delete from steam_library first
+            library_result = await conn.execute(
+                "DELETE FROM steam_library WHERE user_id = $1",
+                user_id,
+            )
+            # Delete from steam_users
+            users_result = await conn.execute(
+                "DELETE FROM steam_users WHERE user_id = $1",
+                user_id,
+            )
+            # Return True if any records were deleted
+            library_deleted = int(library_result.split()[-1]) if library_result.startswith("DELETE") else 0
+            users_deleted = int(users_result.split()[-1]) if users_result.startswith("DELETE") else 0
+            return (library_deleted + users_deleted) > 0
+
+
+async def steam_get_user(user_id: int) -> dict | None:
+    """
+    Fetches steam_users row by user_id.
+    Returns dict with user data or None if not found.
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT user_id, steam_id, wishlist_sync_enabled, library_sync_enabled, "
+        "last_wishlist_sync, last_library_sync, created_at FROM steam_users WHERE user_id = $1",
+        user_id,
+    )
+    return dict(row) if row else None
+
+
+async def steam_update_sync_time(user_id: int, sync_type: str):
+    """
+    Updates last_wishlist_sync or last_library_sync to current timestamp.
+    sync_type should be 'wishlist' or 'library'.
+    """
+    pool = await get_pool()
+    if sync_type == "wishlist":
+        await pool.execute(
+            "UPDATE steam_users SET last_wishlist_sync = NOW() WHERE user_id = $1",
+            user_id,
+        )
+    elif sync_type == "library":
+        await pool.execute(
+            "UPDATE steam_users SET last_library_sync = NOW() WHERE user_id = $1",
+            user_id,
+        )
+
+
+async def steam_get_all_synced_users() -> list[dict]:
+    """
+    Returns list of all users with wishlist_sync_enabled or library_sync_enabled.
+    Used by scheduler jobs for automatic synchronization.
+    Returns list of dicts with user data.
+    """
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT user_id, steam_id, wishlist_sync_enabled, library_sync_enabled, "
+        "last_wishlist_sync, last_library_sync FROM steam_users "
+        "WHERE wishlist_sync_enabled = TRUE OR library_sync_enabled = TRUE"
+    )
+    return [dict(row) for row in rows]
+
+
+async def steam_library_replace(user_id: int, appids: list[int]):
+    """
+    Replaces user's Steam library with new list of app IDs.
+    Deletes existing library entries for user_id, then batch inserts new appids.
+    Uses ON CONFLICT DO NOTHING to handle duplicates gracefully.
+    All operations are performed in a single transaction for atomicity.
+    
+    Args:
+        user_id: Telegram user ID
+        appids: List of Steam app IDs to store
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Delete existing library entries for this user
+            await conn.execute(
+                "DELETE FROM steam_library WHERE user_id = $1",
+                user_id,
+            )
+            
+            # Batch insert new appids if list is not empty
+            if appids:
+                # Prepare values for batch insert
+                values = [(user_id, appid) for appid in appids]
+                await conn.executemany(
+                    "INSERT INTO steam_library (user_id, appid) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                    values,
+                )
+
+
+async def steam_library_contains(user_id: int, appid: int) -> bool:
+    """
+    Checks if a specific app ID exists in the user's Steam library.
+    
+    Args:
+        user_id: Telegram user ID
+        appid: Steam app ID to check
+        
+    Returns:
+        True if the game is in the user's library, False otherwise
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT 1 FROM steam_library WHERE user_id = $1 AND appid = $2",
+        user_id,
+        appid,
+    )
+    return row is not None
+
+
+async def steam_library_filter_deals(user_id: int, deals: list) -> list:
+    """
+    Filters a list of Deal objects, excluding games owned by the user.
+    
+    Args:
+        user_id: Telegram user ID
+        deals: List of Deal objects to filter
+        
+    Returns:
+        List of Deal objects excluding owned games
+    """
+    if not deals:
+        return []
+    
+    pool = await get_pool()
+    
+    # Get all owned app IDs for this user
+    rows = await pool.fetch(
+        "SELECT appid FROM steam_library WHERE user_id = $1",
+        user_id,
+    )
+    owned_appids = {row["appid"] for row in rows}
+    
+    # Filter out deals where the app ID is in the owned set
+    # Deal objects have deal_id in format "steam_{appid}" or other store formats
+    filtered_deals = []
+    for deal in deals:
+        # Extract appid from deal_id if it's a Steam deal
+        if deal.deal_id.startswith("steam_"):
+            try:
+                appid = int(deal.deal_id.split("_", 1)[1])
+                if appid in owned_appids:
+                    continue  # Skip owned games
+            except (ValueError, IndexError):
+                pass  # If parsing fails, include the deal
+        
+        filtered_deals.append(deal)
+    
+    return filtered_deals
+
+
+# --- price cache ---
+
+async def price_cache_get(game_title: str) -> dict | None:
+    """
+    Fetches cached price comparison results if cached_at is within 6 hours.
+    
+    Args:
+        game_title: Game title to look up in cache
+        
+    Returns:
+        Dict with prices data if cache is fresh, None otherwise
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT prices, cached_at FROM price_cache "
+        "WHERE game_title = $1 AND cached_at >= NOW() - INTERVAL '6 hours'",
+        game_title,
+    )
+    return dict(row) if row else None
+
+
+async def price_cache_set(game_title: str, prices: dict):
+    """
+    Upserts price comparison results with current timestamp.
+    
+    Args:
+        game_title: Game title as cache key
+        prices: Dict with price data to cache (will be stored as JSONB)
+    """
+    pool = await get_pool()
+    await pool.execute(
+        "INSERT INTO price_cache (game_title, prices, cached_at) "
+        "VALUES ($1, $2, NOW()) "
+        "ON CONFLICT (game_title) DO UPDATE SET prices = $2, cached_at = NOW()",
+        game_title, prices,
+    )
+
+
+async def price_cache_cleanup():
+    """
+    Deletes price cache entries older than 6 hours.
+    Should be called by scheduled job to prevent cache table growth.
+    
+    Returns:
+        Number of deleted records
+    """
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM price_cache WHERE cached_at < NOW() - INTERVAL '6 hours'"
+    )
+    try:
+        return int(result.split()[-1])
+    except Exception:
+        return 0
+
+
+# --- free game subscriptions ---
+
+async def free_game_subscribe(user_id: int) -> bool:
+    """
+    Subscribes a user to free game notifications.
+    Inserts user_id into free_game_subs table.
+    
+    Args:
+        user_id: Telegram user ID to subscribe
+        
+    Returns:
+        True on success, False if already subscribed (duplicate)
+    """
+    pool = await get_pool()
+    try:
+        await pool.execute(
+            "INSERT INTO free_game_subs (user_id) VALUES ($1)",
+            user_id,
+        )
+        return True
+    except asyncpg.UniqueViolationError:
+        return False
+
+
+async def free_game_unsubscribe(user_id: int) -> bool:
+    """
+    Unsubscribes a user from free game notifications.
+    Deletes user_id from free_game_subs table.
+    
+    Args:
+        user_id: Telegram user ID to unsubscribe
+        
+    Returns:
+        True if user was unsubscribed, False if user was not subscribed
+    """
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM free_game_subs WHERE user_id = $1",
+        user_id,
+    )
+    return result == "DELETE 1"
+
+
+async def free_game_get_subscribers() -> list[int]:
+    """
+    Returns list of all user IDs subscribed to free game notifications.
+    Used by free game monitor to send direct messages to subscribers.
+    
+    Returns:
+        List of Telegram user IDs
+    """
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT user_id FROM free_game_subs ORDER BY subscribed_at"
+    )
+    return [row["user_id"] for row in rows]

@@ -57,13 +57,13 @@ async def _delete_user_wishlist(user_id: int):
 
 @pytest.mark.asyncio
 async def test_init_db_creates_all_tables():
-    """WHEN init_db() вызывается, THE Database SHALL создать все 4 таблицы.
+    """WHEN init_db() вызывается, THE Database SHALL создать все таблицы.
 
     Validates: Requirements 2.1
     """
     await database.init_db()
     pool = await database.get_pool()
-    expected = {"posted_deals", "wishlist", "votes", "price_game"}
+    expected = {"posted_deals", "wishlist", "votes", "price_game", "steam_users"}
     rows = await pool.fetch(
         "SELECT table_name FROM information_schema.tables "
         "WHERE table_schema = 'public' AND table_name = ANY($1::text[])",
@@ -317,3 +317,1246 @@ def test_property_price_game_round_trip(price):
         finally:
             await _delete_deal(deal_id)
     _run(_inner())
+
+
+
+# ---------------------------------------------------------------------------
+# Steam Integration Tests
+# ---------------------------------------------------------------------------
+
+async def _delete_steam_user(user_id: int):
+    """Удаляет тестового пользователя из steam_users."""
+    pool = await database.get_pool()
+    await pool.execute("DELETE FROM steam_users WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_link_account_success():
+    """WHEN steam_link_account вызывается с новым user_id, THE Database SHALL вернуть True.
+
+    Validates: Requirements 1.3, 6.1
+    """
+    user_id = _test_user_id()
+    steam_id = "76561198012345678"
+    
+    try:
+        result = await database.steam_link_account(user_id, steam_id)
+        assert result is True, "Первая привязка должна вернуть True"
+        
+        # Проверяем, что запись создана
+        pool = await database.get_pool()
+        row = await pool.fetchrow(
+            "SELECT steam_id FROM steam_users WHERE user_id = $1", user_id
+        )
+        assert row is not None, "Запись должна быть создана"
+        assert row["steam_id"] == steam_id, "Steam ID должен совпадать"
+    finally:
+        await _delete_steam_user(user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_link_account_duplicate():
+    """WHEN steam_link_account вызывается с существующим user_id, THE Database SHALL вернуть False.
+
+    Validates: Requirements 1.3, 6.1
+    """
+    user_id = _test_user_id()
+    steam_id = "76561198012345678"
+    
+    try:
+        # Первая привязка
+        result1 = await database.steam_link_account(user_id, steam_id)
+        assert result1 is True, "Первая привязка должна вернуть True"
+        
+        # Повторная привязка (дубликат)
+        result2 = await database.steam_link_account(user_id, steam_id)
+        assert result2 is False, "Повторная привязка должна вернуть False"
+    finally:
+        await _delete_steam_user(user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_unlink_account_deletes_all_data():
+    """WHEN steam_unlink_account вызывается, THE Database SHALL удалить все данные из steam_users и steam_library.
+
+    Validates: Requirements 6.3
+    """
+    user_id = _test_user_id()
+    steam_id = "76561198012345678"
+    pool = await database.get_pool()
+    
+    try:
+        # Создаем данные пользователя
+        await database.steam_link_account(user_id, steam_id)
+        
+        # Добавляем записи в steam_library
+        await pool.execute(
+            "INSERT INTO steam_library (user_id, appid) VALUES ($1, $2), ($1, $3)",
+            user_id, 123, 456
+        )
+        
+        # Проверяем, что данные созданы
+        user_row = await pool.fetchrow(
+            "SELECT * FROM steam_users WHERE user_id = $1", user_id
+        )
+        assert user_row is not None, "Запись в steam_users должна существовать"
+        
+        library_rows = await pool.fetch(
+            "SELECT * FROM steam_library WHERE user_id = $1", user_id
+        )
+        assert len(library_rows) == 2, "Должно быть 2 записи в steam_library"
+        
+        # Отвязываем аккаунт
+        result = await database.steam_unlink_account(user_id)
+        assert result is True, "steam_unlink_account должна вернуть True при удалении данных"
+        
+        # Проверяем, что все данные удалены
+        user_row = await pool.fetchrow(
+            "SELECT * FROM steam_users WHERE user_id = $1", user_id
+        )
+        assert user_row is None, "Запись в steam_users должна быть удалена"
+        
+        library_rows = await pool.fetch(
+            "SELECT * FROM steam_library WHERE user_id = $1", user_id
+        )
+        assert len(library_rows) == 0, "Все записи в steam_library должны быть удалены"
+    finally:
+        # Очистка на случай ошибки теста
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+        await _delete_steam_user(user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_unlink_account_no_data():
+    """WHEN steam_unlink_account вызывается для несуществующего user_id, THE Database SHALL вернуть False.
+
+    Validates: Requirements 6.3
+    """
+    user_id = _test_user_id()
+    
+    # Вызываем отвязку для пользователя без данных
+    result = await database.steam_unlink_account(user_id)
+    assert result is False, "steam_unlink_account должна вернуть False если нет данных для удаления"
+
+
+@pytest.mark.asyncio
+async def test_steam_get_user_exists():
+    """WHEN steam_get_user вызывается с существующим user_id, THE Database SHALL вернуть dict с данными.
+    
+    Validates: Requirements 1.6, 2.6, 7.4
+    """
+    user_id = _test_user_id()
+    steam_id = "76561198087654321"
+    
+    try:
+        # Создаем пользователя
+        await database.steam_link_account(user_id, steam_id)
+        
+        # Получаем данные
+        result = await database.steam_get_user(user_id)
+        
+        assert result is not None, "Должен вернуть dict"
+        assert result["user_id"] == user_id, "user_id должен совпадать"
+        assert result["steam_id"] == steam_id, "steam_id должен совпадать"
+        assert result["wishlist_sync_enabled"] is True, "wishlist_sync_enabled по умолчанию True"
+        assert result["library_sync_enabled"] is True, "library_sync_enabled по умолчанию True"
+        assert result["last_wishlist_sync"] is None, "last_wishlist_sync изначально None"
+        assert result["last_library_sync"] is None, "last_library_sync изначально None"
+        assert result["created_at"] is not None, "created_at должен быть установлен"
+    finally:
+        await _delete_steam_user(user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_get_user_not_exists():
+    """WHEN steam_get_user вызывается с несуществующим user_id, THE Database SHALL вернуть None.
+    
+    Validates: Requirements 1.6, 2.6, 7.4
+    """
+    user_id = _test_user_id()
+    
+    result = await database.steam_get_user(user_id)
+    
+    assert result is None, "Должен вернуть None для несуществующего пользователя"
+
+
+@pytest.mark.asyncio
+async def test_steam_update_sync_time_wishlist():
+    """WHEN steam_update_sync_time вызывается с sync_type='wishlist', THE Database SHALL обновить last_wishlist_sync.
+    
+    Validates: Requirements 1.6, 2.6, 7.4
+    """
+    user_id = _test_user_id()
+    steam_id = "76561198011111111"
+    
+    try:
+        # Создаем пользователя
+        await database.steam_link_account(user_id, steam_id)
+        
+        # Проверяем начальное состояние
+        user_before = await database.steam_get_user(user_id)
+        assert user_before["last_wishlist_sync"] is None, "Изначально должно быть None"
+        
+        # Обновляем время синхронизации
+        await database.steam_update_sync_time(user_id, "wishlist")
+        
+        # Проверяем обновление
+        user_after = await database.steam_get_user(user_id)
+        assert user_after["last_wishlist_sync"] is not None, "last_wishlist_sync должен быть установлен"
+        assert user_after["last_library_sync"] is None, "last_library_sync не должен измениться"
+    finally:
+        await _delete_steam_user(user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_update_sync_time_library():
+    """WHEN steam_update_sync_time вызывается с sync_type='library', THE Database SHALL обновить last_library_sync.
+    
+    Validates: Requirements 1.6, 2.6, 7.4
+    """
+    user_id = _test_user_id()
+    steam_id = "76561198022222222"
+    
+    try:
+        # Создаем пользователя
+        await database.steam_link_account(user_id, steam_id)
+        
+        # Проверяем начальное состояние
+        user_before = await database.steam_get_user(user_id)
+        assert user_before["last_library_sync"] is None, "Изначально должно быть None"
+        
+        # Обновляем время синхронизации
+        await database.steam_update_sync_time(user_id, "library")
+        
+        # Проверяем обновление
+        user_after = await database.steam_get_user(user_id)
+        assert user_after["last_library_sync"] is not None, "last_library_sync должен быть установлен"
+        assert user_after["last_wishlist_sync"] is None, "last_wishlist_sync не должен измениться"
+    finally:
+        await _delete_steam_user(user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_get_all_synced_users():
+    """WHEN steam_get_all_synced_users вызывается, THE Database SHALL вернуть список пользователей с включенной синхронизацией.
+    
+    Validates: Requirements 1.6, 2.6
+    """
+    user_id_1 = _test_user_id()
+    user_id_2 = _test_user_id()
+    user_id_3 = _test_user_id()
+    steam_id_1 = "76561198000000001"
+    steam_id_2 = "76561198000000002"
+    steam_id_3 = "76561198000000003"
+    
+    try:
+        # Создаем трех пользователей
+        await database.steam_link_account(user_id_1, steam_id_1)
+        await database.steam_link_account(user_id_2, steam_id_2)
+        await database.steam_link_account(user_id_3, steam_id_3)
+        
+        # Отключаем синхронизацию для третьего пользователя
+        pool = await database.get_pool()
+        await pool.execute(
+            "UPDATE steam_users SET wishlist_sync_enabled = FALSE, library_sync_enabled = FALSE WHERE user_id = $1",
+            user_id_3
+        )
+        
+        # Получаем всех пользователей с включенной синхронизацией
+        result = await database.steam_get_all_synced_users()
+        
+        # Проверяем результат
+        assert isinstance(result, list), "Должен вернуть список"
+        
+        # Фильтруем только наших тестовых пользователей
+        test_users = [u for u in result if u["user_id"] in [user_id_1, user_id_2, user_id_3]]
+        
+        assert len(test_users) == 2, "Должно быть 2 пользователя с включенной синхронизацией"
+        
+        user_ids = [u["user_id"] for u in test_users]
+        assert user_id_1 in user_ids, "user_id_1 должен быть в списке"
+        assert user_id_2 in user_ids, "user_id_2 должен быть в списке"
+        assert user_id_3 not in user_ids, "user_id_3 не должен быть в списке (синхронизация отключена)"
+        
+        # Проверяем структуру данных
+        for user in test_users:
+            assert "user_id" in user, "Должен содержать user_id"
+            assert "steam_id" in user, "Должен содержать steam_id"
+            assert "wishlist_sync_enabled" in user, "Должен содержать wishlist_sync_enabled"
+            assert "library_sync_enabled" in user, "Должен содержать library_sync_enabled"
+            assert user["wishlist_sync_enabled"] or user["library_sync_enabled"], "Хотя бы одна синхронизация должна быть включена"
+    finally:
+        await _delete_steam_user(user_id_1)
+        await _delete_steam_user(user_id_2)
+        await _delete_steam_user(user_id_3)
+
+
+@pytest.mark.asyncio
+async def test_steam_get_all_synced_users_empty():
+    """WHEN steam_get_all_synced_users вызывается и нет пользователей с синхронизацией, THE Database SHALL вернуть пустой список.
+    
+    Validates: Requirements 1.6, 2.6
+    """
+    # Создаем пользователя с отключенной синхронизацией
+    user_id = _test_user_id()
+    steam_id = "76561198000000099"
+    
+    try:
+        await database.steam_link_account(user_id, steam_id)
+        
+        # Отключаем всю синхронизацию
+        pool = await database.get_pool()
+        await pool.execute(
+            "UPDATE steam_users SET wishlist_sync_enabled = FALSE, library_sync_enabled = FALSE WHERE user_id = $1",
+            user_id
+        )
+        
+        # Получаем всех пользователей с включенной синхронизацией
+        result = await database.steam_get_all_synced_users()
+        
+        # Фильтруем только нашего тестового пользователя
+        test_users = [u for u in result if u["user_id"] == user_id]
+        
+        assert len(test_users) == 0, "Не должно быть пользователей с отключенной синхронизацией"
+    finally:
+        await _delete_steam_user(user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_library_replace_empty_to_new():
+    """WHEN steam_library_replace вызывается для пользователя без библиотеки, THE Database SHALL добавить новые appids.
+    
+    Validates: Requirements 2.3
+    """
+    user_id = _test_user_id()
+    appids = [123, 456, 789]
+    pool = await database.get_pool()
+    
+    try:
+        # Заменяем библиотеку (изначально пустую)
+        await database.steam_library_replace(user_id, appids)
+        
+        # Проверяем, что все appids добавлены
+        rows = await pool.fetch(
+            "SELECT appid FROM steam_library WHERE user_id = $1 ORDER BY appid",
+            user_id
+        )
+        stored_appids = [r["appid"] for r in rows]
+        
+        assert stored_appids == sorted(appids), "Все appids должны быть добавлены"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_library_replace_existing():
+    """WHEN steam_library_replace вызывается для пользователя с существующей библиотекой, THE Database SHALL удалить старые и добавить новые appids.
+    
+    Validates: Requirements 2.3
+    """
+    user_id = _test_user_id()
+    old_appids = [111, 222, 333]
+    new_appids = [444, 555, 666]
+    pool = await database.get_pool()
+    
+    try:
+        # Добавляем старые appids
+        await database.steam_library_replace(user_id, old_appids)
+        
+        # Проверяем, что старые appids добавлены
+        rows = await pool.fetch(
+            "SELECT appid FROM steam_library WHERE user_id = $1 ORDER BY appid",
+            user_id
+        )
+        stored_appids = [r["appid"] for r in rows]
+        assert stored_appids == sorted(old_appids), "Старые appids должны быть добавлены"
+        
+        # Заменяем библиотеку новыми appids
+        await database.steam_library_replace(user_id, new_appids)
+        
+        # Проверяем, что только новые appids остались
+        rows = await pool.fetch(
+            "SELECT appid FROM steam_library WHERE user_id = $1 ORDER BY appid",
+            user_id
+        )
+        stored_appids = [r["appid"] for r in rows]
+        
+        assert stored_appids == sorted(new_appids), "Только новые appids должны остаться"
+        assert 111 not in stored_appids, "Старые appids должны быть удалены"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_library_replace_empty_list():
+    """WHEN steam_library_replace вызывается с пустым списком, THE Database SHALL удалить все существующие appids.
+    
+    Validates: Requirements 2.3
+    """
+    user_id = _test_user_id()
+    appids = [777, 888, 999]
+    pool = await database.get_pool()
+    
+    try:
+        # Добавляем appids
+        await database.steam_library_replace(user_id, appids)
+        
+        # Проверяем, что appids добавлены
+        rows = await pool.fetch(
+            "SELECT appid FROM steam_library WHERE user_id = $1",
+            user_id
+        )
+        assert len(rows) == 3, "Должно быть 3 appids"
+        
+        # Заменяем пустым списком
+        await database.steam_library_replace(user_id, [])
+        
+        # Проверяем, что все appids удалены
+        rows = await pool.fetch(
+            "SELECT appid FROM steam_library WHERE user_id = $1",
+            user_id
+        )
+        assert len(rows) == 0, "Все appids должны быть удалены"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_library_replace_with_duplicates():
+    """WHEN steam_library_replace вызывается со списком содержащим дубликаты, THE Database SHALL использовать ON CONFLICT DO NOTHING.
+    
+    Validates: Requirements 2.3
+    """
+    user_id = _test_user_id()
+    appids_with_duplicates = [100, 200, 100, 300, 200]  # Дубликаты: 100, 200
+    pool = await database.get_pool()
+    
+    try:
+        # Заменяем библиотеку списком с дубликатами
+        await database.steam_library_replace(user_id, appids_with_duplicates)
+        
+        # Проверяем, что дубликаты не создали проблем и хранятся уникальные значения
+        rows = await pool.fetch(
+            "SELECT appid FROM steam_library WHERE user_id = $1 ORDER BY appid",
+            user_id
+        )
+        stored_appids = [r["appid"] for r in rows]
+        
+        # Должны быть только уникальные значения
+        assert stored_appids == [100, 200, 300], "Должны быть только уникальные appids"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_library_replace_atomicity():
+    """WHEN steam_library_replace выполняется, THE Database SHALL использовать транзакцию для атомарности операций.
+    
+    Validates: Requirements 2.3
+    """
+    user_id = _test_user_id()
+    old_appids = [10, 20, 30]
+    new_appids = [40, 50, 60]
+    pool = await database.get_pool()
+    
+    try:
+        # Добавляем старые appids
+        await database.steam_library_replace(user_id, old_appids)
+        
+        # Заменяем новыми appids
+        await database.steam_library_replace(user_id, new_appids)
+        
+        # Проверяем, что операция была атомарной - либо все старые удалены и все новые добавлены
+        rows = await pool.fetch(
+            "SELECT appid FROM steam_library WHERE user_id = $1 ORDER BY appid",
+            user_id
+        )
+        stored_appids = [r["appid"] for r in rows]
+        
+        # Не должно быть смеси старых и новых - только новые
+        assert stored_appids == sorted(new_appids), "Должны быть только новые appids (атомарность)"
+        for old_appid in old_appids:
+            assert old_appid not in stored_appids, f"Старый appid {old_appid} не должен присутствовать"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+
+@pytest.mark.asyncio
+async def test_steam_library_contains_exists():
+    """WHEN steam_library_contains вызывается с существующим appid, THE Database SHALL вернуть True.
+    
+    Validates: Requirements 2.4, 2.5
+    """
+    user_id = _test_user_id()
+    appids = [12345, 67890, 11111]
+    pool = await database.get_pool()
+    
+    try:
+        # Добавляем appids в библиотеку
+        await database.steam_library_replace(user_id, appids)
+        
+        # Проверяем существующий appid
+        result = await database.steam_library_contains(user_id, 12345)
+        assert result is True, "Должен вернуть True для существующего appid"
+        
+        result = await database.steam_library_contains(user_id, 67890)
+        assert result is True, "Должен вернуть True для существующего appid"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_library_contains_not_exists():
+    """WHEN steam_library_contains вызывается с несуществующим appid, THE Database SHALL вернуть False.
+    
+    Validates: Requirements 2.4, 2.5
+    """
+    user_id = _test_user_id()
+    appids = [12345, 67890]
+    pool = await database.get_pool()
+    
+    try:
+        # Добавляем appids в библиотеку
+        await database.steam_library_replace(user_id, appids)
+        
+        # Проверяем несуществующий appid
+        result = await database.steam_library_contains(user_id, 99999)
+        assert result is False, "Должен вернуть False для несуществующего appid"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_library_contains_empty_library():
+    """WHEN steam_library_contains вызывается для пользователя без библиотеки, THE Database SHALL вернуть False.
+    
+    Validates: Requirements 2.4, 2.5
+    """
+    user_id = _test_user_id()
+    
+    # Проверяем appid для пользователя без библиотеки
+    result = await database.steam_library_contains(user_id, 12345)
+    assert result is False, "Должен вернуть False для пользователя без библиотеки"
+
+
+@pytest.mark.asyncio
+async def test_steam_library_filter_deals_empty_list():
+    """WHEN steam_library_filter_deals вызывается с пустым списком deals, THE Database SHALL вернуть пустой список.
+    
+    Validates: Requirements 2.4, 2.5
+    """
+    user_id = _test_user_id()
+    
+    result = await database.steam_library_filter_deals(user_id, [])
+    assert result == [], "Должен вернуть пустой список для пустого входа"
+
+
+@pytest.mark.asyncio
+async def test_steam_library_filter_deals_no_library():
+    """WHEN steam_library_filter_deals вызывается для пользователя без библиотеки, THE Database SHALL вернуть все deals.
+    
+    Validates: Requirements 2.4, 2.5
+    """
+    from parsers.steam import Deal
+    
+    user_id = _test_user_id()
+    
+    # Создаем тестовые deals
+    deals = [
+        Deal(
+            deal_id="steam_12345",
+            title="Game 1",
+            store="Steam",
+            old_price="1000 ₽",
+            new_price="500 ₽",
+            discount=50,
+            link="https://store.steampowered.com/app/12345",
+        ),
+        Deal(
+            deal_id="steam_67890",
+            title="Game 2",
+            store="Steam",
+            old_price="2000 ₽",
+            new_price="1000 ₽",
+            discount=50,
+            link="https://store.steampowered.com/app/67890",
+        ),
+    ]
+    
+    # Фильтруем deals для пользователя без библиотеки
+    result = await database.steam_library_filter_deals(user_id, deals)
+    
+    assert len(result) == 2, "Должен вернуть все deals для пользователя без библиотеки"
+    assert result == deals, "Список deals не должен измениться"
+
+
+@pytest.mark.asyncio
+async def test_steam_library_filter_deals_filters_owned():
+    """WHEN steam_library_filter_deals вызывается с deals содержащими owned games, THE Database SHALL исключить owned games.
+    
+    Validates: Requirements 2.4, 2.5
+    """
+    from parsers.steam import Deal
+    
+    user_id = _test_user_id()
+    appids = [12345, 67890]  # Owned games
+    pool = await database.get_pool()
+    
+    try:
+        # Добавляем owned games в библиотеку
+        await database.steam_library_replace(user_id, appids)
+        
+        # Создаем тестовые deals (2 owned, 1 not owned)
+        deals = [
+            Deal(
+                deal_id="steam_12345",  # Owned
+                title="Owned Game 1",
+                store="Steam",
+                old_price="1000 ₽",
+                new_price="500 ₽",
+                discount=50,
+                link="https://store.steampowered.com/app/12345",
+            ),
+            Deal(
+                deal_id="steam_99999",  # Not owned
+                title="Not Owned Game",
+                store="Steam",
+                old_price="1500 ₽",
+                new_price="750 ₽",
+                discount=50,
+                link="https://store.steampowered.com/app/99999",
+            ),
+            Deal(
+                deal_id="steam_67890",  # Owned
+                title="Owned Game 2",
+                store="Steam",
+                old_price="2000 ₽",
+                new_price="1000 ₽",
+                discount=50,
+                link="https://store.steampowered.com/app/67890",
+            ),
+        ]
+        
+        # Фильтруем deals
+        result = await database.steam_library_filter_deals(user_id, deals)
+        
+        assert len(result) == 1, "Должен вернуть только 1 deal (not owned)"
+        assert result[0].deal_id == "steam_99999", "Должен вернуть только not owned deal"
+        assert result[0].title == "Not Owned Game", "Название должно совпадать"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_library_filter_deals_non_steam_deals():
+    """WHEN steam_library_filter_deals вызывается с non-Steam deals, THE Database SHALL включить их в результат.
+    
+    Validates: Requirements 2.4, 2.5
+    """
+    from parsers.steam import Deal
+    
+    user_id = _test_user_id()
+    appids = [12345]
+    pool = await database.get_pool()
+    
+    try:
+        # Добавляем owned game в библиотеку
+        await database.steam_library_replace(user_id, appids)
+        
+        # Создаем тестовые deals (1 Steam owned, 1 GOG, 1 Epic)
+        deals = [
+            Deal(
+                deal_id="steam_12345",  # Owned Steam game
+                title="Owned Steam Game",
+                store="Steam",
+                old_price="1000 ₽",
+                new_price="500 ₽",
+                discount=50,
+                link="https://store.steampowered.com/app/12345",
+            ),
+            Deal(
+                deal_id="gog_67890",  # GOG game
+                title="GOG Game",
+                store="GOG",
+                old_price="1500 ₽",
+                new_price="750 ₽",
+                discount=50,
+                link="https://www.gog.com/game/67890",
+            ),
+            Deal(
+                deal_id="epic_11111",  # Epic game
+                title="Epic Game",
+                store="Epic Games",
+                old_price="2000 ₽",
+                new_price="1000 ₽",
+                discount=50,
+                link="https://store.epicgames.com/11111",
+            ),
+        ]
+        
+        # Фильтруем deals
+        result = await database.steam_library_filter_deals(user_id, deals)
+        
+        assert len(result) == 2, "Должен вернуть 2 deals (GOG и Epic)"
+        assert result[0].deal_id == "gog_67890", "Должен включить GOG deal"
+        assert result[1].deal_id == "epic_11111", "Должен включить Epic deal"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_library_filter_deals_invalid_deal_id():
+    """WHEN steam_library_filter_deals вызывается с deals с невалидным deal_id, THE Database SHALL включить их в результат.
+    
+    Validates: Requirements 2.4, 2.5
+    """
+    from parsers.steam import Deal
+    
+    user_id = _test_user_id()
+    appids = [12345]
+    pool = await database.get_pool()
+    
+    try:
+        # Добавляем owned game в библиотеку
+        await database.steam_library_replace(user_id, appids)
+        
+        # Создаем тестовые deals с невалидными deal_id
+        deals = [
+            Deal(
+                deal_id="steam_invalid",  # Невалидный appid (не число)
+                title="Invalid Deal",
+                store="Steam",
+                old_price="1000 ₽",
+                new_price="500 ₽",
+                discount=50,
+                link="https://store.steampowered.com/app/invalid",
+            ),
+            Deal(
+                deal_id="steam_",  # Пустой appid
+                title="Empty AppID Deal",
+                store="Steam",
+                old_price="1500 ₽",
+                new_price="750 ₽",
+                discount=50,
+                link="https://store.steampowered.com/app/",
+            ),
+        ]
+        
+        # Фильтруем deals
+        result = await database.steam_library_filter_deals(user_id, deals)
+        
+        # Невалидные deal_id должны быть включены (не вызывать ошибку)
+        assert len(result) == 2, "Должен вернуть все deals с невалидными deal_id"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_steam_library_filter_deals_all_owned():
+    """WHEN steam_library_filter_deals вызывается и все deals owned, THE Database SHALL вернуть пустой список.
+    
+    Validates: Requirements 2.4, 2.5
+    """
+    from parsers.steam import Deal
+    
+    user_id = _test_user_id()
+    appids = [12345, 67890, 11111]
+    pool = await database.get_pool()
+    
+    try:
+        # Добавляем все games в библиотеку
+        await database.steam_library_replace(user_id, appids)
+        
+        # Создаем тестовые deals (все owned)
+        deals = [
+            Deal(
+                deal_id="steam_12345",
+                title="Owned Game 1",
+                store="Steam",
+                old_price="1000 ₽",
+                new_price="500 ₽",
+                discount=50,
+                link="https://store.steampowered.com/app/12345",
+            ),
+            Deal(
+                deal_id="steam_67890",
+                title="Owned Game 2",
+                store="Steam",
+                old_price="1500 ₽",
+                new_price="750 ₽",
+                discount=50,
+                link="https://store.steampowered.com/app/67890",
+            ),
+            Deal(
+                deal_id="steam_11111",
+                title="Owned Game 3",
+                store="Steam",
+                old_price="2000 ₽",
+                new_price="1000 ₽",
+                discount=50,
+                link="https://store.steampowered.com/app/11111",
+            ),
+        ]
+        
+        # Фильтруем deals
+        result = await database.steam_library_filter_deals(user_id, deals)
+        
+        assert len(result) == 0, "Должен вернуть пустой список если все deals owned"
+        assert result == [], "Результат должен быть пустым списком"
+    finally:
+        await pool.execute("DELETE FROM steam_library WHERE user_id = $1", user_id)
+
+
+
+# ---------------------------------------------------------------------------
+# Price Cache Tests
+# ---------------------------------------------------------------------------
+
+async def _delete_price_cache(game_title: str):
+    """Удаляет тестовую запись из price_cache."""
+    pool = await database.get_pool()
+    await pool.execute("DELETE FROM price_cache WHERE game_title = $1", game_title)
+
+
+@pytest.mark.asyncio
+async def test_price_cache_set_and_get():
+    """WHEN price_cache_set вызывается, price_cache_get должен вернуть сохраненные данные.
+    
+    Validates: Requirements 3.6
+    """
+    game_title = f"test_game_{uuid.uuid4().hex[:8]}"
+    prices = {
+        "Steam": {"price": 1000, "discount": 50, "link": "https://steam.com"},
+        "GOG": {"price": 1200, "discount": 40, "link": "https://gog.com"},
+    }
+    
+    try:
+        # Сохраняем в кеш
+        await database.price_cache_set(game_title, prices)
+        
+        # Получаем из кеша
+        result = await database.price_cache_get(game_title)
+        
+        assert result is not None, "Должен вернуть данные из кеша"
+        assert result["prices"] == prices, "Prices должны совпадать"
+        assert result["cached_at"] is not None, "cached_at должен быть установлен"
+    finally:
+        await _delete_price_cache(game_title)
+
+
+@pytest.mark.asyncio
+async def test_price_cache_get_not_exists():
+    """WHEN price_cache_get вызывается для несуществующей игры, THE Database SHALL вернуть None.
+    
+    Validates: Requirements 3.6
+    """
+    game_title = f"nonexistent_game_{uuid.uuid4().hex[:8]}"
+    
+    result = await database.price_cache_get(game_title)
+    
+    assert result is None, "Должен вернуть None для несуществующей игры"
+
+
+@pytest.mark.asyncio
+async def test_price_cache_get_expired():
+    """WHEN price_cache_get вызывается для записи старше 6 часов, THE Database SHALL вернуть None.
+    
+    Validates: Requirements 3.6
+    """
+    game_title = f"test_game_{uuid.uuid4().hex[:8]}"
+    prices = {"Steam": {"price": 1000, "discount": 50}}
+    pool = await database.get_pool()
+    
+    try:
+        # Вставляем запись с датой старше 6 часов
+        old_ts = datetime.now(timezone.utc) - timedelta(hours=7)
+        await pool.execute(
+            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2, $3)",
+            game_title, prices, old_ts,
+        )
+        
+        # Пытаемся получить из кеша
+        result = await database.price_cache_get(game_title)
+        
+        assert result is None, "Должен вернуть None для записи старше 6 часов"
+    finally:
+        await _delete_price_cache(game_title)
+
+
+@pytest.mark.asyncio
+async def test_price_cache_get_fresh():
+    """WHEN price_cache_get вызывается для записи младше 6 часов, THE Database SHALL вернуть данные.
+    
+    Validates: Requirements 3.6
+    """
+    game_title = f"test_game_{uuid.uuid4().hex[:8]}"
+    prices = {"Steam": {"price": 1000, "discount": 50}}
+    pool = await database.get_pool()
+    
+    try:
+        # Вставляем запись с датой 5 часов назад (свежая)
+        fresh_ts = datetime.now(timezone.utc) - timedelta(hours=5)
+        await pool.execute(
+            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2, $3)",
+            game_title, prices, fresh_ts,
+        )
+        
+        # Получаем из кеша
+        result = await database.price_cache_get(game_title)
+        
+        assert result is not None, "Должен вернуть данные для свежей записи"
+        assert result["prices"] == prices, "Prices должны совпадать"
+    finally:
+        await _delete_price_cache(game_title)
+
+
+@pytest.mark.asyncio
+async def test_price_cache_set_upsert():
+    """WHEN price_cache_set вызывается дважды для одной игры, THE Database SHALL обновить существующую запись.
+    
+    Validates: Requirements 3.6
+    """
+    game_title = f"test_game_{uuid.uuid4().hex[:8]}"
+    prices_old = {"Steam": {"price": 1000, "discount": 50}}
+    prices_new = {"Steam": {"price": 800, "discount": 60}}
+    pool = await database.get_pool()
+    
+    try:
+        # Первая вставка
+        await database.price_cache_set(game_title, prices_old)
+        
+        # Проверяем первую запись
+        result1 = await database.price_cache_get(game_title)
+        assert result1 is not None, "Первая запись должна существовать"
+        assert result1["prices"] == prices_old, "Первые prices должны совпадать"
+        cached_at_1 = result1["cached_at"]
+        
+        # Небольшая задержка чтобы timestamp изменился
+        import asyncio
+        await asyncio.sleep(0.1)
+        
+        # Вторая вставка (upsert)
+        await database.price_cache_set(game_title, prices_new)
+        
+        # Проверяем обновленную запись
+        result2 = await database.price_cache_get(game_title)
+        assert result2 is not None, "Обновленная запись должна существовать"
+        assert result2["prices"] == prices_new, "Prices должны быть обновлены"
+        cached_at_2 = result2["cached_at"]
+        
+        # Проверяем, что timestamp обновился
+        assert cached_at_2 > cached_at_1, "cached_at должен быть обновлен"
+        
+        # Проверяем, что запись одна (не создалась дубликат)
+        rows = await pool.fetch(
+            "SELECT COUNT(*) as cnt FROM price_cache WHERE game_title = $1",
+            game_title
+        )
+        assert rows[0]["cnt"] == 1, "Должна быть только одна запись (upsert)"
+    finally:
+        await _delete_price_cache(game_title)
+
+
+@pytest.mark.asyncio
+async def test_price_cache_cleanup():
+    """WHEN price_cache_cleanup вызывается, THE Database SHALL удалить записи старше 6 часов.
+    
+    Validates: Requirements 3.6
+    """
+    game_title_old = f"test_game_old_{uuid.uuid4().hex[:8]}"
+    game_title_fresh = f"test_game_fresh_{uuid.uuid4().hex[:8]}"
+    prices = {"Steam": {"price": 1000, "discount": 50}}
+    pool = await database.get_pool()
+    
+    try:
+        # Вставляем старую запись (7 часов назад)
+        old_ts = datetime.now(timezone.utc) - timedelta(hours=7)
+        await pool.execute(
+            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2, $3)",
+            game_title_old, prices, old_ts,
+        )
+        
+        # Вставляем свежую запись (5 часов назад)
+        fresh_ts = datetime.now(timezone.utc) - timedelta(hours=5)
+        await pool.execute(
+            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2, $3)",
+            game_title_fresh, prices, fresh_ts,
+        )
+        
+        # Вызываем cleanup
+        deleted = await database.price_cache_cleanup()
+        
+        assert deleted >= 1, f"Должна быть удалена хотя бы 1 запись, удалено: {deleted}"
+        
+        # Проверяем, что старая запись удалена
+        row_old = await pool.fetchrow(
+            "SELECT 1 FROM price_cache WHERE game_title = $1", game_title_old
+        )
+        assert row_old is None, "Старая запись должна быть удалена"
+        
+        # Проверяем, что свежая запись осталась
+        row_fresh = await pool.fetchrow(
+            "SELECT 1 FROM price_cache WHERE game_title = $1", game_title_fresh
+        )
+        assert row_fresh is not None, "Свежая запись должна остаться"
+    finally:
+        await _delete_price_cache(game_title_old)
+        await _delete_price_cache(game_title_fresh)
+
+
+@pytest.mark.asyncio
+async def test_price_cache_cleanup_no_old_records():
+    """WHEN price_cache_cleanup вызывается и нет старых записей, THE Database SHALL вернуть 0.
+    
+    Validates: Requirements 3.6
+    """
+    game_title = f"test_game_{uuid.uuid4().hex[:8]}"
+    prices = {"Steam": {"price": 1000, "discount": 50}}
+    
+    try:
+        # Вставляем только свежую запись
+        await database.price_cache_set(game_title, prices)
+        
+        # Вызываем cleanup
+        deleted = await database.price_cache_cleanup()
+        
+        # Проверяем, что свежая запись не удалена
+        result = await database.price_cache_get(game_title)
+        assert result is not None, "Свежая запись не должна быть удалена"
+    finally:
+        await _delete_price_cache(game_title)
+
+
+@pytest.mark.asyncio
+async def test_price_cache_set_complex_prices():
+    """WHEN price_cache_set вызывается со сложной структурой prices, THE Database SHALL сохранить её корректно.
+    
+    Validates: Requirements 3.6
+    """
+    game_title = f"test_game_{uuid.uuid4().hex[:8]}"
+    prices = {
+        "Steam": {
+            "price": 1000,
+            "discount": 50,
+            "link": "https://steam.com/app/123",
+            "currency": "RUB",
+            "original_price": 2000,
+        },
+        "GOG": {
+            "price": 1200,
+            "discount": 40,
+            "link": "https://gog.com/game/test",
+            "currency": "RUB",
+        },
+        "Epic Games": {
+            "price": 900,
+            "discount": 55,
+            "link": "https://epicgames.com/store/test",
+            "currency": "RUB",
+        },
+        "CheapShark": {
+            "price": 850,
+            "discount": 57,
+            "link": "https://cheapshark.com/redirect?dealID=abc123",
+            "currency": "USD",
+        },
+    }
+    
+    try:
+        # Сохраняем сложную структуру
+        await database.price_cache_set(game_title, prices)
+        
+        # Получаем из кеша
+        result = await database.price_cache_get(game_title)
+        
+        assert result is not None, "Должен вернуть данные из кеша"
+        assert result["prices"] == prices, "Сложная структура prices должна совпадать"
+        
+        # Проверяем, что все магазины сохранены
+        assert "Steam" in result["prices"], "Steam должен быть в prices"
+        assert "GOG" in result["prices"], "GOG должен быть в prices"
+        assert "Epic Games" in result["prices"], "Epic Games должен быть в prices"
+        assert "CheapShark" in result["prices"], "CheapShark должен быть в prices"
+        
+        # Проверяем вложенные поля
+        assert result["prices"]["Steam"]["original_price"] == 2000, "Вложенные поля должны сохраниться"
+        assert result["prices"]["CheapShark"]["currency"] == "USD", "Вложенные поля должны сохраниться"
+    finally:
+        await _delete_price_cache(game_title)
+
+
+
+# ---------------------------------------------------------------------------
+# Free Game Subscriptions Tests
+# ---------------------------------------------------------------------------
+
+async def _delete_free_game_sub(user_id: int):
+    """Удаляет тестовую подписку на бесплатные игры."""
+    pool = await database.get_pool()
+    await pool.execute("DELETE FROM free_game_subs WHERE user_id = $1", user_id)
+
+
+@pytest.mark.asyncio
+async def test_free_game_subscribe_success():
+    """WHEN free_game_subscribe вызывается с новым user_id, THE Database SHALL вернуть True.
+
+    Validates: Requirements 4.8
+    """
+    user_id = _test_user_id()
+    
+    try:
+        result = await database.free_game_subscribe(user_id)
+        assert result is True, "Первая подписка должна вернуть True"
+        
+        # Проверяем, что запись создана
+        pool = await database.get_pool()
+        row = await pool.fetchrow(
+            "SELECT user_id FROM free_game_subs WHERE user_id = $1", user_id
+        )
+        assert row is not None, "Запись должна быть создана"
+        assert row["user_id"] == user_id, "user_id должен совпадать"
+    finally:
+        await _delete_free_game_sub(user_id)
+
+
+@pytest.mark.asyncio
+async def test_free_game_subscribe_duplicate():
+    """WHEN free_game_subscribe вызывается с существующим user_id, THE Database SHALL вернуть False.
+
+    Validates: Requirements 4.8
+    """
+    user_id = _test_user_id()
+    
+    try:
+        # Первая подписка
+        result1 = await database.free_game_subscribe(user_id)
+        assert result1 is True, "Первая подписка должна вернуть True"
+        
+        # Повторная подписка (дубликат)
+        result2 = await database.free_game_subscribe(user_id)
+        assert result2 is False, "Повторная подписка должна вернуть False"
+    finally:
+        await _delete_free_game_sub(user_id)
+
+
+@pytest.mark.asyncio
+async def test_free_game_unsubscribe_success():
+    """WHEN free_game_unsubscribe вызывается для подписанного пользователя, THE Database SHALL вернуть True.
+
+    Validates: Requirements 4.8
+    """
+    user_id = _test_user_id()
+    
+    try:
+        # Подписываемся
+        await database.free_game_subscribe(user_id)
+        
+        # Отписываемся
+        result = await database.free_game_unsubscribe(user_id)
+        assert result is True, "Отписка должна вернуть True"
+        
+        # Проверяем, что запись удалена
+        pool = await database.get_pool()
+        row = await pool.fetchrow(
+            "SELECT user_id FROM free_game_subs WHERE user_id = $1", user_id
+        )
+        assert row is None, "Запись должна быть удалена"
+    finally:
+        await _delete_free_game_sub(user_id)
+
+
+@pytest.mark.asyncio
+async def test_free_game_unsubscribe_not_subscribed():
+    """WHEN free_game_unsubscribe вызывается для неподписанного пользователя, THE Database SHALL вернуть False.
+
+    Validates: Requirements 4.8
+    """
+    user_id = _test_user_id()
+    
+    # Отписываемся без предварительной подписки
+    result = await database.free_game_unsubscribe(user_id)
+    assert result is False, "Отписка неподписанного пользователя должна вернуть False"
+
+
+@pytest.mark.asyncio
+async def test_free_game_get_subscribers_empty():
+    """WHEN free_game_get_subscribers вызывается и нет подписчиков, THE Database SHALL вернуть пустой список.
+
+    Validates: Requirements 4.9
+    """
+    # Получаем всех подписчиков
+    result = await database.free_game_get_subscribers()
+    
+    # Фильтруем только тестовых пользователей (если они есть)
+    test_subscribers = [uid for uid in result if uid >= TEST_USER_BASE]
+    
+    assert isinstance(result, list), "Должен вернуть список"
+    assert len(test_subscribers) == 0, "Не должно быть тестовых подписчиков"
+
+
+@pytest.mark.asyncio
+async def test_free_game_get_subscribers_multiple():
+    """WHEN free_game_get_subscribers вызывается с несколькими подписчиками, THE Database SHALL вернуть список всех user_ids.
+
+    Validates: Requirements 4.9
+    """
+    user_id_1 = _test_user_id()
+    user_id_2 = _test_user_id()
+    user_id_3 = _test_user_id()
+    
+    try:
+        # Подписываем трех пользователей
+        await database.free_game_subscribe(user_id_1)
+        await database.free_game_subscribe(user_id_2)
+        await database.free_game_subscribe(user_id_3)
+        
+        # Получаем всех подписчиков
+        result = await database.free_game_get_subscribers()
+        
+        # Проверяем результат
+        assert isinstance(result, list), "Должен вернуть список"
+        
+        # Фильтруем только наших тестовых пользователей
+        test_subscribers = [uid for uid in result if uid in [user_id_1, user_id_2, user_id_3]]
+        
+        assert len(test_subscribers) == 3, "Должно быть 3 тестовых подписчика"
+        assert user_id_1 in test_subscribers, "user_id_1 должен быть в списке"
+        assert user_id_2 in test_subscribers, "user_id_2 должен быть в списке"
+        assert user_id_3 in test_subscribers, "user_id_3 должен быть в списке"
+    finally:
+        await _delete_free_game_sub(user_id_1)
+        await _delete_free_game_sub(user_id_2)
+        await _delete_free_game_sub(user_id_3)
+
+
+@pytest.mark.asyncio
+async def test_free_game_subscribe_unsubscribe_round_trip():
+    """WHEN free_game_subscribe и free_game_unsubscribe вызываются последовательно, THE Database SHALL корректно обрабатывать подписку и отписку.
+
+    Validates: Requirements 4.8, 4.9
+    """
+    user_id = _test_user_id()
+    
+    try:
+        # Подписываемся
+        result1 = await database.free_game_subscribe(user_id)
+        assert result1 is True, "Подписка должна вернуть True"
+        
+        # Проверяем, что пользователь в списке подписчиков
+        subscribers = await database.free_game_get_subscribers()
+        assert user_id in subscribers, "Пользователь должен быть в списке подписчиков"
+        
+        # Отписываемся
+        result2 = await database.free_game_unsubscribe(user_id)
+        assert result2 is True, "Отписка должна вернуть True"
+        
+        # Проверяем, что пользователя нет в списке подписчиков
+        subscribers = await database.free_game_get_subscribers()
+        assert user_id not in subscribers, "Пользователя не должно быть в списке подписчиков"
+        
+        # Повторная отписка должна вернуть False
+        result3 = await database.free_game_unsubscribe(user_id)
+        assert result3 is False, "Повторная отписка должна вернуть False"
+    finally:
+        await _delete_free_game_sub(user_id)

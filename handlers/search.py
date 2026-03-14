@@ -119,10 +119,19 @@ async def cmd_find(message: Message):
 
 @router.message(Command("top"))
 async def cmd_top(message: Message):
-    """Топ текущих скидок в личку (без публикации в канал)."""
+    """
+    Топ текущих скидок в личку (без публикации в канал).
+    Фильтрует игры из Steam библиотеки пользователя.
+    
+    Requirements: 2.5
+    """
     from scheduler import get_top_deals_now
+    
     wait_msg = await message.answer("🔍 Ищу лучшие скидки...")
-    deals = await get_top_deals_now(limit=5)
+    
+    # Pass user_id to filter out owned games
+    deals = await get_top_deals_now(limit=5, user_id=message.from_user.id)
+    
     if not deals:
         await wait_msg.edit_text("Сейчас нет новых скидок.")
         return

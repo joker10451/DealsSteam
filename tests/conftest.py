@@ -35,6 +35,8 @@ async def reset_db_pool():
         await pool.execute("DELETE FROM votes WHERE deal_id LIKE 'test_%'")
         await pool.execute("DELETE FROM price_game WHERE deal_id LIKE 'test_%'")
         await pool.execute("DELETE FROM wishlist WHERE user_id >= 9000000000")
+        await pool.execute("DELETE FROM steam_users WHERE user_id >= 9000000000")
+        await pool.execute("DELETE FROM steam_library WHERE user_id >= 9000000000")
         await pool.close()
         database._pool = None
 

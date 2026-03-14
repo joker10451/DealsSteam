@@ -14,7 +14,12 @@ from config import BOT_TOKEN, CHANNEL_ID, DATABASE_URL, POST_TIMES, ADMIN_ID
 from database import init_db
 from parsers.utils import init_session, close_session
 from publisher import set_bot
-from scheduler import check_and_post, post_weekly_digest, post_hidden_gems, run_parser_tests
+from scheduler import (
+    check_and_post, post_weekly_digest, post_hidden_gems, run_parser_tests,
+    sync_all_steam_wishlists, sync_all_steam_libraries
+)
+from free_game_monitor import check_epic_free_games, check_gog_free_games
+from database import price_cache_cleanup
 from server import start_web_server, self_ping
 import server
 from handlers import register_all
@@ -63,6 +68,11 @@ async def main():
         BotCommand(command="top", description="Топ скидок сейчас"),
         BotCommand(command="price", description="Цены по регионам Steam"),
         BotCommand(command="find", description="Найти скидки по тегу"),
+        BotCommand(command="steam", description="Привязать Steam аккаунт"),
+        BotCommand(command="steamsync", description="Синхронизировать Steam"),
+        BotCommand(command="steamstatus", description="Статус Steam интеграции"),
+        BotCommand(command="steamdisconnect", description="Отключить Steam"),
+        BotCommand(command="freenotify", description="Уведомления о бесплатных играх"),
         BotCommand(command="games", description="Мини-игры"),
         BotCommand(command="score", description="Мои баллы"),
         BotCommand(command="leaderboard", description="Таблица лидеров"),
@@ -127,6 +137,46 @@ async def main():
         name="weekly_digest",
     )
     log.info("Еженедельный дайджест: каждое воскресенье в 12:00 МСК")
+
+    # Steam Integration Jobs
+    scheduler.add_job(
+        sync_all_steam_wishlists,
+        CronTrigger(hour=6, minute=0, timezone=MSK),
+        name="steam_wishlist_sync"
+    )
+    log.info("Синхронизация Steam вишлистов: каждый день в 06:00 МСК")
+
+    scheduler.add_job(
+        sync_all_steam_libraries,
+        CronTrigger(day_of_week="mon", hour=3, minute=0, timezone=MSK),
+        name="steam_library_sync"
+    )
+    log.info("Синхронизация Steam библиотек: каждый понедельник в 03:00 МСК")
+
+    # Free Game Monitoring Jobs
+    scheduler.add_job(
+        check_epic_free_games,
+        "interval",
+        hours=2,
+        name="epic_free_monitor"
+    )
+    log.info("Мониторинг бесплатных игр Epic: каждые 2 часа")
+
+    scheduler.add_job(
+        check_gog_free_games,
+        "interval",
+        hours=6,
+        name="gog_free_monitor"
+    )
+    log.info("Мониторинг бесплатных игр GOG: каждые 6 часов")
+
+    # Price Cache Cleanup Job
+    scheduler.add_job(
+        price_cache_cleanup,
+        CronTrigger(hour=4, minute=0, timezone=MSK),
+        name="price_cache_cleanup"
+    )
+    log.info("Очистка кеша цен: каждый день в 04:00 МСК")
 
     if os.getenv("RENDER_EXTERNAL_URL"):
         scheduler.add_job(self_ping, "interval", minutes=10, name="self_ping")

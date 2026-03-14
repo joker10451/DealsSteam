@@ -36,3 +36,13 @@ MIN_PRICE_RUB = int(os.getenv("MIN_PRICE_RUB", "50"))
 
 # Кулдаун ручной публикации (секунды)
 POST_COOLDOWN_SEC = int(os.getenv("POST_COOLDOWN_SEC", "300"))
+
+# Steam Web API integration
+STEAM_API_KEY = os.getenv("STEAM_API_KEY", "")
+STEAM_INTEGRATION_ENABLED = os.getenv("STEAM_INTEGRATION_ENABLED", "true").lower() == "true"
+FREE_GAME_MONITOR_ENABLED = os.getenv("FREE_GAME_MONITOR_ENABLED", "true").lower() == "true"
+PRICE_COMPARISON_ENABLED = os.getenv("PRICE_COMPARISON_ENABLED", "true").lower() == "true"
+
+# Steam sync rate limiting
+STEAM_SYNC_COOLDOWN_HOURS = int(os.getenv("STEAM_SYNC_COOLDOWN_HOURS", "1"))
+PRICE_CACHE_HOURS = int(os.getenv("PRICE_CACHE_HOURS", "6"))

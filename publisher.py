@@ -281,9 +281,47 @@ async def notify_users(user_ids: list[int], deal, header: str):
 
 
 async def notify_wishlist_users(deal):
+    """
+    Notifies users who have the game in their wishlist.
+    Filters out users who own the game in their Steam library.
+    
+    Requirements: 2.7
+    """
+    from database import steam_library_contains
+    
     user_ids = await get_wishlist_matches(deal.title)
     if not user_ids:
         return
+    
+    # Filter out users who own the game in their Steam library
+    # Only check for Steam games
+    if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
+        try:
+            appid = int(deal.deal_id.replace("steam_", ""))
+            filtered_user_ids = []
+            
+            for user_id in user_ids:
+                # Check if user owns this game
+                owns_game = await steam_library_contains(user_id, appid)
+                
+                if owns_game:
+                    log.info(
+                        f"Skipping wishlist notification for user {user_id}: "
+                        f"already owns {deal.title} (appid {appid})"
+                    )
+                else:
+                    filtered_user_ids.append(user_id)
+            
+            user_ids = filtered_user_ids
+        
+        except (ValueError, TypeError) as e:
+            log.warning(f"Failed to parse Steam appid from {deal.deal_id}: {e}")
+            # Continue with original user_ids if parsing fails
+    
+    if not user_ids:
+        log.info(f"No users to notify for {deal.title} (all own the game)")
+        return
+    
     await notify_users(user_ids, deal, "🔔 <b>Скидка на игру из твоего вишлиста!</b>")
     await increment_metric("wishlist_notify", len(user_ids))
 
