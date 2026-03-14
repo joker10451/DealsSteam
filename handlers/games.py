@@ -51,7 +51,9 @@ async def cmd_leaderboard(message: Message):
     if not leaders:
         await message.answer("Таблица лидеров пока пуста. Будь первым!")
         return
-    
+
+    from rewards import get_user_badges
+
     lines = ["🏆 <b>Таблица лидеров</b>\n"]
     
     medals = ["🥇", "🥈", "🥉"]
@@ -59,7 +61,9 @@ async def cmd_leaderboard(message: Message):
         medal = medals[i-1] if i <= 3 else f"{i}."
         score = leader["total_score"]
         games = leader["games_played"]
-        lines.append(f"{medal} <b>{score}</b> баллов ({games} игр)")
+        badges = await get_user_badges(leader["user_id"])
+        badge_str = f" {badges}" if badges else ""
+        lines.append(f"{medal}{badge_str} <b>{score}</b> баллов ({games} игр)")
     
     lines.append("\n💡 Играй в мини-игры, чтобы попасть в топ!")
     
@@ -234,9 +238,14 @@ async def cmd_profile(message: Message):
     achievements_data = await get_user_achievements(user_id)
     unlocked_count = achievements_data['unlocked_count']
     total_achievements = achievements_data['total']
-    
+
+    # Получаем значки
+    from rewards import get_user_badges
+    badges = await get_user_badges(user_id)
+    badge_str = f" {badges}" if badges else ""
+
     text = f"""
-👤 <b>Профиль: {esc(username)}</b>
+👤 <b>Профиль: {esc(username)}{badge_str}</b>
 
 🎮 <b>Мини-игры:</b>
 ⭐️ Баллы: <b>{total}</b>

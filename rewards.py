@@ -217,6 +217,23 @@ async def has_active_reward(user_id: int, reward_id: str) -> bool:
         return bool(result)
 
 
+async def get_user_badges(user_id: int) -> str:
+    """Вернуть строку с эмодзи значков пользователя (для профиля и лидерборда)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT reward_id FROM user_rewards
+            WHERE user_id = $1 AND is_active = TRUE
+            AND (expires_at IS NULL OR expires_at > NOW())
+        """, user_id)
+    badge_map = {
+        "badge_founder": "⭐️",
+        "badge_vip": "👑",
+    }
+    badges = [badge_map[r["reward_id"]] for r in rows if r["reward_id"] in badge_map]
+    return " ".join(badges)
+
+
 async def claim_reward(user_id: int, reward_id: str) -> dict:
     """Активировать приз (для one_time призов типа ключей)."""
     pool = await get_pool()
