@@ -9,6 +9,7 @@ from aiogram.client.default import DefaultBotProperties
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 from config import BOT_TOKEN, CHANNEL_ID, DATABASE_URL, POST_TIMES, ADMIN_ID
 from database import init_db
 from parsers.utils import init_session, close_session
@@ -45,6 +46,31 @@ async def main():
     set_bot(bot)
 
     register_all(dp)
+
+    # Команды для обычных пользователей
+    user_commands = [
+        BotCommand(command="start", description="Начать"),
+        BotCommand(command="wishlist", description="Мой вишлист"),
+        BotCommand(command="remove", description="Удалить из вишлиста"),
+        BotCommand(command="cancel", description="Удалить кнопками"),
+        BotCommand(command="genre", description="Подписка на жанр"),
+        BotCommand(command="genres", description="Мои подписки на жанры"),
+        BotCommand(command="top", description="Топ скидок сейчас"),
+        BotCommand(command="price", description="Цены по регионам Steam"),
+        BotCommand(command="find", description="Найти скидки по тегу"),
+    ]
+    # Команды для админа (включают всё)
+    admin_commands = user_commands + [
+        BotCommand(command="post", description="Опубликовать скидки"),
+        BotCommand(command="gems", description="Опубликовать жемчужины"),
+        BotCommand(command="digest", description="Опубликовать дайджест"),
+        BotCommand(command="stats", description="Метрики за 7 дней"),
+    ]
+
+    await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
+    if ADMIN_ID:
+        await bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
+    log.info("Команды бота установлены")
 
     await start_web_server()
 
