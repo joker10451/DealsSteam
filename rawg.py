@@ -23,6 +23,19 @@ async def _get(url: str) -> Optional[dict]:
     return None
 
 
+async def get_metacritic(title: str) -> Optional[int]:
+    """Возвращает оценку Metacritic для игры или None."""
+    if not RAWG_API_KEY:
+        return None
+    from urllib.parse import quote
+    search_url = RAWG_SEARCH.format(key=RAWG_API_KEY, query=quote(title))
+    data = await _get(search_url)
+    if not data or not data.get("results"):
+        return None
+    game = data["results"][0]
+    return game.get("metacritic")
+
+
 async def get_game_info(title: str) -> Optional[dict]:
     """
     Возвращает словарь с данными об игре:

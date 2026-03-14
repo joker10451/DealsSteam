@@ -62,6 +62,7 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS idx_posted_deals_posted_at ON posted_deals(posted_at)"
         )
         await init_metrics_table(conn)
+        await init_genre_table(conn)
 
 
 # --- posted_deals ---
@@ -257,3 +258,71 @@ async def wishlist_remove_user(user_id: int):
     """Удаляет все записи пользователя из вишлиста (при блокировке бота)."""
     pool = await get_pool()
     await pool.execute("DELETE FROM wishlist WHERE user_id = $1", user_id)
+
+
+# --- genre subscriptions ---
+
+async def init_genre_table(conn):
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS genre_subscriptions (
+            user_id BIGINT NOT NULL,
+            genre TEXT NOT NULL,
+            UNIQUE(user_id, genre)
+        )
+    """)
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_genre_sub_user ON genre_subscriptions(user_id)"
+    )
+
+
+async def genre_subscribe(user_id: int, genre: str) -> bool:
+    pool = await get_pool()
+    try:
+        await pool.execute(
+            "INSERT INTO genre_subscriptions (user_id, genre) VALUES ($1, $2)",
+            user_id, genre.lower().strip(),
+        )
+        return True
+    except asyncpg.UniqueViolationError:
+        return False
+
+
+async def genre_unsubscribe(user_id: int, genre: str) -> bool:
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM genre_subscriptions WHERE user_id = $1 AND genre = $2",
+        user_id, genre.lower().strip(),
+    )
+    return result == "DELETE 1"
+
+
+async def genre_list(user_id: int) -> list[str]:
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT genre FROM genre_subscriptions WHERE user_id = $1 ORDER BY genre",
+        user_id,
+    )
+    return [r["genre"] for r in rows]
+
+
+async def get_genre_subscribers(genre: str) -> list[int]:
+    """Возвращает user_id всех подписчиков на жанр."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT user_id FROM genre_subscriptions WHERE genre = $1",
+        genre.lower().strip(),
+    )
+    return [r["user_id"] for r in rows]
+
+
+async def get_all_genre_subscribers_for_deal(genres: list[str]) -> list[int]:
+    """Возвращает уникальных user_id подписанных на любой из жанров сделки."""
+    if not genres:
+        return []
+    pool = await get_pool()
+    genres_lower = [g.lower() for g in genres]
+    rows = await pool.fetch(
+        "SELECT DISTINCT user_id FROM genre_subscriptions WHERE genre = ANY($1::text[])",
+        genres_lower,
+    )
+    return [r["user_id"] for r in rows]

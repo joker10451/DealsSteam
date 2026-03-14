@@ -11,11 +11,12 @@ import pytz
 from config import (
     CHANNEL_ID, ADMIN_ID,
     MIN_DISCOUNT_PERCENT, MIN_STEAM_RATING,
-    FILTER_ADULT,
+    FILTER_ADULT, FILTER_BUNDLES, MIN_PRICE_RUB,
 )
 from database import (
     is_already_posted, mark_as_posted, cleanup_old_records,
     get_weekly_top, get_top_voted,
+    get_all_genre_subscribers_for_deal,
 )
 from parsers.steam import get_steam_deals
 from parsers.gog import get_gog_deals
@@ -79,6 +80,22 @@ async def check_and_post() -> Optional[str]:
     for deal in all_deals:
         if await is_already_posted(deal.deal_id):
             continue
+
+        # Фильтр бандлов
+        if FILTER_BUNDLES and "bundle" in deal.title.lower():
+            log.info(f"Пропущено (бандл): {deal.title}")
+            continue
+
+        # Фильтр по минимальной цене (только платные)
+        if not deal.is_free and MIN_PRICE_RUB > 0:
+            try:
+                price_str = str(deal.new_price).replace("₽", "").replace(" ", "").replace(",", "").strip()
+                if float(price_str) < MIN_PRICE_RUB:
+                    log.info(f"Пропущено (цена {price_str}₽ < {MIN_PRICE_RUB}₽): {deal.title}")
+                    continue
+            except (ValueError, AttributeError):
+                pass
+
         if deal.store == "Steam" and MIN_STEAM_RATING > 0:
             appid = deal.deal_id.replace("steam_", "")
             rating = await get_steam_rating(appid)
@@ -121,6 +138,7 @@ async def check_and_post() -> Optional[str]:
             post_time = datetime.now(MSK).isoformat()
             await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount)
             await notify_wishlist_users(deal)
+            await notify_genre_subscribers(deal)
             if not deal.is_free:
                 await send_price_game(deal)
             deleted = await cleanup_old_records()
@@ -243,3 +261,72 @@ async def run_parser_tests():
         await get_bot().send_message(ADMIN_ID, text)
     except Exception as e:
         log.error(f"Не удалось отправить отчёт админу: {e}")
+
+
+async def notify_genre_subscribers(deal):
+    """Уведомляет подписчиков на жанры из сделки."""
+    if not deal.genres:
+        return
+    user_ids = await get_all_genre_subscribers_for_deal(deal.genres)
+    if not user_ids:
+        return
+
+    from publisher import get_bot
+    from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
+    from database import wishlist_remove_user, increment_metric
+
+    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(deal.store, "🕹")
+    genres_str = ", ".join(f"#{g.lower().replace(' ', '_')}" for g in deal.genres[:3])
+    price_line = "🆓 <b>БЕСПЛАТНО</b>" if deal.is_free else (
+        f"<s>{esc(deal.old_price)}</s> → <b>{esc(deal.new_price)}</b> <code>-{deal.discount}%</code>"
+    )
+    text = (
+        f"🎯 <b>Скидка по твоей подписке на жанр!</b>\n\n"
+        f"{store_emoji} <b>{esc(deal.title)}</b>\n"
+        f"{price_line}\n"
+        f"🏷 {genres_str}\n\n"
+        f"<a href='{deal.link}'>Открыть в {esc(deal.store)}</a>"
+    )
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🛒 {deal.store}", url=deal.link)]
+    ])
+
+    for user_id in user_ids:
+        try:
+            await get_bot().send_message(user_id, text, reply_markup=keyboard)
+            await increment_metric("genre_notify")
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after)
+            try:
+                await get_bot().send_message(user_id, text, reply_markup=keyboard)
+            except Exception:
+                pass
+        except TelegramForbiddenError:
+            await wishlist_remove_user(user_id)
+        except Exception as e:
+            log.warning(f"Жанр-уведомление не отправлено user_id={user_id}: {e}")
+        await asyncio.sleep(0.05)
+
+
+async def get_top_deals_now(limit: int = 5) -> list:
+    """Возвращает топ текущих скидок (без публикации)."""
+    all_deals = []
+    for fetcher in [get_steam_deals, get_gog_deals, get_epic_deals]:
+        try:
+            deals = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
+            all_deals.extend(deals)
+        except Exception:
+            pass
+
+    # Фильтруем бандлы и уже опубликованные
+    result = []
+    for deal in all_deals:
+        if FILTER_BUNDLES and "bundle" in deal.title.lower():
+            continue
+        if await is_already_posted(deal.deal_id):
+            continue
+        result.append(deal)
+
+    result.sort(key=lambda d: d.discount, reverse=True)
+    return result[:limit]

@@ -116,3 +116,27 @@ async def cmd_find(message: Message):
         buttons.append([InlineKeyboardButton(text=f"🛒 {name[:35]}", url=link)])
 
     await wait_msg.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+@router.message(Command("top"))
+async def cmd_top(message: Message):
+    """Топ текущих скидок в личку (без публикации в канал)."""
+    from scheduler import get_top_deals_now
+    wait_msg = await message.answer("🔍 Ищу лучшие скидки...")
+    deals = await get_top_deals_now(limit=5)
+    if not deals:
+        await wait_msg.edit_text("Сейчас нет новых скидок.")
+        return
+
+    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get
+    lines = ["🏆 <b>Топ скидок прямо сейчас:</b>\n"]
+    buttons = []
+    for i, deal in enumerate(deals, 1):
+        emoji = store_emoji(deal.store, "🕹")
+        price = "Бесплатно" if deal.is_free else f"{esc(deal.new_price)} (-{deal.discount}%)"
+        lines.append(f"{i}. {emoji} <b>{esc(deal.title)}</b> — {price}")
+        buttons.append([InlineKeyboardButton(text=f"🛒 {deal.title[:35]}", url=deal.link)])
+
+    await wait_msg.edit_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )

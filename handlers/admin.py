@@ -1,15 +1,18 @@
 import logging
+import time
 from html import escape
 
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from config import ADMIN_ID
+from config import ADMIN_ID, POST_COOLDOWN_SEC
 from database import get_metrics_summary
 
 log = logging.getLogger(__name__)
 router = Router()
+
+_last_manual_post: float = 0
 
 
 def esc(text: str) -> str:
@@ -25,6 +28,14 @@ async def cmd_post(message: Message):
     if not _admin_only(message):
         await message.answer("⛔ Нет доступа.")
         return
+
+    global _last_manual_post
+    elapsed = time.time() - _last_manual_post
+    if elapsed < POST_COOLDOWN_SEC:
+        remaining = int(POST_COOLDOWN_SEC - elapsed)
+        await message.answer(f"⏳ Подожди ещё {remaining} сек. перед следующей публикацией.")
+        return
+
     from scheduler import check_and_post
     import server
     status_msg = await message.answer("🔄 Запускаю публикацию...")
@@ -32,6 +43,7 @@ async def cmd_post(message: Message):
         post_time = await check_and_post()
         if post_time:
             server.last_post_time = post_time
+            _last_manual_post = time.time()
         await status_msg.edit_text("✅ Готово.")
     except Exception as e:
         log.error(f"Ошибка ручной публикации: {e}")
@@ -81,6 +93,7 @@ async def cmd_stats(message: Message):
         "published": "📢 Публикаций",
         "publish_error": "❌ Ошибок публикации",
         "wishlist_notify": "🔔 Уведомлений вишлиста",
+        "genre_notify": "🎯 Уведомлений по жанру",
         "vote_fire": "🔥 Голосов огонь",
         "vote_poop": "💩 Голосов мимо",
     }

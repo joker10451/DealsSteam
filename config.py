@@ -26,3 +26,13 @@ IGDB_CLIENT_SECRET = os.getenv("IGDB_CLIENT_SECRET", "")
 
 # Фильтр 18+ контента
 FILTER_ADULT = os.getenv("FILTER_ADULT", "false").lower() == "true"
+
+# RAWG API — https://rawg.io/apidocs
+RAWG_API_KEY = os.getenv("RAWG_API_KEY", "")
+
+# Фильтры публикации
+FILTER_BUNDLES = os.getenv("FILTER_BUNDLES", "true").lower() == "true"
+MIN_PRICE_RUB = int(os.getenv("MIN_PRICE_RUB", "50"))
+
+# Кулдаун ручной публикации (секунды)
+POST_COOLDOWN_SEC = int(os.getenv("POST_COOLDOWN_SEC", "300"))
