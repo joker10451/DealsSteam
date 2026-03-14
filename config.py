@@ -17,7 +17,8 @@ POST_TIMES = [
 ]
 
 DB_CLEANUP_DAYS = 30
-DB_PATH = os.getenv("DB_PATH", "data/deals.db" if os.path.isdir("data") else "deals.db")
+DB_PATH = os.getenv("DB_PATH", "data/deals.db" if os.path.isdir("data") else "deals.db")  # для локального SQLite
+DATABASE_URL = os.getenv("DATABASE_URL", "")  # Supabase PostgreSQL connection string
 
 # IGDB API (Twitch) — https://dev.twitch.tv/console
 IGDB_CLIENT_ID = os.getenv("IGDB_CLIENT_ID", "")

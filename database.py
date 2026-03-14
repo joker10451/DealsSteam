@@ -1,215 +1,199 @@
-import aiosqlite
-from config import DB_PATH, DB_CLEANUP_DAYS
+import asyncpg
+from config import DATABASE_URL, DB_CLEANUP_DAYS
+
+_pool: asyncpg.Pool | None = None
+
+
+async def get_pool() -> asyncpg.Pool:
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    return _pool
 
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS posted_deals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 deal_id TEXT UNIQUE NOT NULL,
                 title TEXT,
                 store TEXT,
                 discount INTEGER DEFAULT 0,
-                posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                posted_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        try:
-            await db.execute("ALTER TABLE posted_deals ADD COLUMN discount INTEGER DEFAULT 0")
-        except Exception:
-            pass
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS wishlist (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
                 query TEXT NOT NULL,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                added_at TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE(user_id, query)
             )
         """)
-        # Голосования: fire/poop за каждый пост
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS votes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 deal_id TEXT NOT NULL,
-                user_id INTEGER NOT NULL,
+                user_id BIGINT NOT NULL,
                 vote TEXT NOT NULL,
-                voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                voted_at TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE(deal_id, user_id)
             )
         """)
-        # Мини-игра: угадай цену
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS price_game (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 deal_id TEXT UNIQUE NOT NULL,
                 original_price INTEGER NOT NULL,
-                posted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                posted_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        await db.commit()
 
 
 # --- posted_deals ---
 
 async def is_already_posted(deal_id: str) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT 1 FROM posted_deals WHERE deal_id = ?", (deal_id,)
-        )
-        return await cursor.fetchone() is not None
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT 1 FROM posted_deals WHERE deal_id = $1", deal_id
+    )
+    return row is not None
 
 
 async def mark_as_posted(deal_id: str, title: str, store: str, discount: int = 0):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO posted_deals (deal_id, title, store, discount) VALUES (?, ?, ?, ?)",
-            (deal_id, title, store, discount),
-        )
-        await db.commit()
+    pool = await get_pool()
+    await pool.execute(
+        "INSERT INTO posted_deals (deal_id, title, store, discount) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+        deal_id, title, store, discount,
+    )
 
 
-async def cleanup_old_records():
-    async with aiosqlite.connect(DB_PATH) as db:
-        result = await db.execute(
-            "DELETE FROM posted_deals WHERE posted_at < datetime('now', ?)",
-            (f"-{DB_CLEANUP_DAYS} days",),
-        )
-        await db.commit()
-        return result.rowcount
+async def cleanup_old_records() -> int:
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM posted_deals WHERE posted_at < NOW() - INTERVAL '$1 days'",
+        DB_CLEANUP_DAYS,
+    )
+    # asyncpg возвращает строку вида "DELETE N"
+    try:
+        return int(result.split()[-1])
+    except Exception:
+        return 0
 
 
 async def get_weekly_top(limit: int = 10) -> list[dict]:
-    """Топ скидок за последние 7 дней по проценту скидки."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute("""
-            SELECT title, store, discount, deal_id
-            FROM posted_deals
-            WHERE posted_at >= datetime('now', '-7 days')
-            ORDER BY discount DESC
-            LIMIT ?
-        """, (limit,))
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+    pool = await get_pool()
+    rows = await pool.fetch("""
+        SELECT title, store, discount, deal_id
+        FROM posted_deals
+        WHERE posted_at >= NOW() - INTERVAL '7 days'
+        ORDER BY discount DESC
+        LIMIT $1
+    """, limit)
+    return [dict(r) for r in rows]
 
 
 # --- wishlist ---
 
 async def wishlist_add(user_id: int, query: str) -> bool:
-    """Добавляет игру в вишлист. Возвращает False если уже есть."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        try:
-            await db.execute(
-                "INSERT INTO wishlist (user_id, query) VALUES (?, ?)",
-                (user_id, query.lower().strip()),
-            )
-            await db.commit()
-            return True
-        except aiosqlite.IntegrityError:
-            return False
+    pool = await get_pool()
+    try:
+        await pool.execute(
+            "INSERT INTO wishlist (user_id, query) VALUES ($1, $2)",
+            user_id, query.lower().strip(),
+        )
+        return True
+    except asyncpg.UniqueViolationError:
+        return False
 
 
 async def wishlist_remove(user_id: int, query: str) -> bool:
-    """Удаляет игру из вишлиста."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        result = await db.execute(
-            "DELETE FROM wishlist WHERE user_id = ? AND query = ?",
-            (user_id, query.lower().strip()),
-        )
-        await db.commit()
-        return result.rowcount > 0
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM wishlist WHERE user_id = $1 AND query = $2",
+        user_id, query.lower().strip(),
+    )
+    return result == "DELETE 1"
 
 
 async def wishlist_list(user_id: int) -> list[str]:
-    """Возвращает список запросов пользователя."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT query FROM wishlist WHERE user_id = ? ORDER BY added_at",
-            (user_id,),
-        )
-        rows = await cursor.fetchall()
-        return [r[0] for r in rows]
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT query FROM wishlist WHERE user_id = $1 ORDER BY added_at",
+        user_id,
+    )
+    return [r["query"] for r in rows]
 
 
 async def get_wishlist_matches(title: str) -> list[int]:
-    """Возвращает user_id всех, у кого в вишлисте есть совпадение с названием игры."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT user_id, query FROM wishlist")
-        rows = await cursor.fetchall()
-
+    pool = await get_pool()
+    rows = await pool.fetch("SELECT user_id, query FROM wishlist")
     title_low = title.lower()
     matched = set()
-    for user_id, query in rows:
-        if query in title_low or title_low in query:
-            matched.add(user_id)
+    for r in rows:
+        if r["query"] in title_low or title_low in r["query"]:
+            matched.add(r["user_id"])
     return list(matched)
 
 
 # --- votes ---
 
 async def add_vote(deal_id: str, user_id: int, vote: str) -> bool:
-    """Сохраняет голос. Возвращает False если уже голосовал."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        try:
-            await db.execute(
-                "INSERT INTO votes (deal_id, user_id, vote) VALUES (?, ?, ?)",
-                (deal_id, user_id, vote),
-            )
-            await db.commit()
-            return True
-        except aiosqlite.IntegrityError:
-            return False
+    pool = await get_pool()
+    try:
+        await pool.execute(
+            "INSERT INTO votes (deal_id, user_id, vote) VALUES ($1, $2, $3)",
+            deal_id, user_id, vote,
+        )
+        return True
+    except asyncpg.UniqueViolationError:
+        return False
 
 
 async def get_votes(deal_id: str) -> dict:
-    """Возвращает {'fire': N, 'poop': N}"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT vote, COUNT(*) FROM votes WHERE deal_id = ? GROUP BY vote",
-            (deal_id,),
-        )
-        rows = await cursor.fetchall()
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT vote, COUNT(*) as cnt FROM votes WHERE deal_id = $1 GROUP BY vote",
+        deal_id,
+    )
     result = {"fire": 0, "poop": 0}
-    for vote, count in rows:
-        if vote in result:
-            result[vote] = count
+    for r in rows:
+        if r["vote"] in result:
+            result[r["vote"]] = r["cnt"]
     return result
 
 
 async def get_top_voted(limit: int = 5) -> list[dict]:
-    """Топ игр по голосам 🔥 за последние 7 дней."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute("""
-            SELECT v.deal_id, p.title, p.store, COUNT(*) as fire_count
-            FROM votes v
-            JOIN posted_deals p ON p.deal_id = v.deal_id
-            WHERE v.vote = 'fire'
-              AND v.voted_at >= datetime('now', '-7 days')
-            GROUP BY v.deal_id
-            ORDER BY fire_count DESC
-            LIMIT ?
-        """, (limit,))
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+    pool = await get_pool()
+    rows = await pool.fetch("""
+        SELECT v.deal_id, p.title, p.store, COUNT(*) as fire_count
+        FROM votes v
+        JOIN posted_deals p ON p.deal_id = v.deal_id
+        WHERE v.vote = 'fire'
+          AND v.voted_at >= NOW() - INTERVAL '7 days'
+        GROUP BY v.deal_id, p.title, p.store
+        ORDER BY fire_count DESC
+        LIMIT $1
+    """, limit)
+    return [dict(r) for r in rows]
 
 
 # --- price_game ---
 
 async def save_price_game(deal_id: str, original_price: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO price_game (deal_id, original_price) VALUES (?, ?)",
-            (deal_id, original_price),
-        )
-        await db.commit()
+    pool = await get_pool()
+    await pool.execute(
+        "INSERT INTO price_game (deal_id, original_price) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        deal_id, original_price,
+    )
 
 
 async def get_price_game(deal_id: str) -> int | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT original_price FROM price_game WHERE deal_id = ?", (deal_id,)
-        )
-        row = await cursor.fetchone()
-        return row[0] if row else None
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT original_price FROM price_game WHERE deal_id = $1", deal_id
+    )
+    return row["original_price"] if row else None
