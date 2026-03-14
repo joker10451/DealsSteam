@@ -74,10 +74,8 @@ async def mark_as_posted(deal_id: str, title: str, store: str, discount: int = 0
 async def cleanup_old_records() -> int:
     pool = await get_pool()
     result = await pool.execute(
-        "DELETE FROM posted_deals WHERE posted_at < NOW() - INTERVAL '$1 days'",
-        DB_CLEANUP_DAYS,
+        f"DELETE FROM posted_deals WHERE posted_at < NOW() - INTERVAL '{DB_CLEANUP_DAYS} days'"
     )
-    # asyncpg возвращает строку вида "DELETE N"
     try:
         return int(result.split()[-1])
     except Exception:
