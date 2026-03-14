@@ -143,7 +143,7 @@ async def post_weekly_digest():
         return
 
     now = datetime.now(MSK).strftime("%d.%m.%Y")
-    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁", "CheapShark": "💰"}
+    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}
 
     lines = [f"📅 <b>ЛУЧШИЕ СКИДКИ НЕДЕЛИ — {now}</b>", "", "🏷 <b>Топ по скидке:</b>"]
     for i, row in enumerate(top_discount, 1):

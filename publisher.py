@@ -94,7 +94,7 @@ async def _localize_price(price_str: str) -> str:
 
 async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool:
     now = datetime.now(MSK).strftime("%d.%m.%Y")
-    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁", "CheapShark": "💰"}.get(deal.store, "🕹")
+    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(deal.store, "🕹")
 
     rating = prefetched_rating
     historical_low = None
