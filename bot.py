@@ -42,6 +42,11 @@ async def main():
         raise SystemExit(1)
 
     await init_db()
+    
+    # Инициализация реферальной системы
+    from referral import init_referral_table
+    await init_referral_table()
+    
     await init_session()
     set_bot(bot)
 
@@ -94,6 +99,14 @@ async def main():
 
     scheduler.add_job(post_hidden_gems, CronTrigger(hour=14, minute=0, timezone=MSK), name="hidden_gems")
     log.info("Скрытые жемчужины: каждый день в 14:00 МСК")
+
+    # Генерация челленджа в 00:00 и публикация в 09:00
+    from daily_challenges import create_todays_challenge, publish_daily_challenge
+    scheduler.add_job(create_todays_challenge, CronTrigger(hour=0, minute=0, timezone=MSK), name="generate_challenge")
+    log.info("Генерация челленджа: каждый день в 00:00 МСК")
+    
+    scheduler.add_job(publish_daily_challenge, CronTrigger(hour=9, minute=0, timezone=MSK), name="publish_challenge")
+    log.info("Публикация челленджа: каждый день в 09:00 МСК")
 
     async def _check_and_post_with_time():
         post_time = await check_and_post()

@@ -34,21 +34,42 @@ async def init_scores_table():
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        
+        # Таблица истории баллов для отслеживания прогресса по челленджам
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_score_history (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                points INT NOT NULL,
+                reason TEXT,
+                earned_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_score_history_user_date 
+            ON user_score_history(user_id, earned_at)
+        """)
 
 
-async def add_score(user_id: int, points: int, correct: bool = True):
+async def add_score(user_id: int, points: int, correct: bool = True, reason: str = "game"):
     """Добавить баллы пользователю."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO user_scores (user_id, total_score, games_played, correct_answers, last_played)
-            VALUES ($1, $2, 1, $3, NOW())
+            VALUES ($1, $2, 1, $3::int, NOW())
             ON CONFLICT (user_id) DO UPDATE SET
                 total_score = user_scores.total_score + $2,
                 games_played = user_scores.games_played + 1,
-                correct_answers = user_scores.correct_answers + CASE WHEN $3 THEN 1 ELSE 0 END,
+                correct_answers = user_scores.correct_answers + $3::int,
                 last_played = NOW()
-        """, user_id, points, correct)
+        """, user_id, points, 1 if correct else 0)
+        
+        # Записываем в историю
+        await conn.execute("""
+            INSERT INTO user_score_history (user_id, points, reason)
+            VALUES ($1, $2, $3)
+        """, user_id, points, reason)
     
     # Обновляем серии и проверяем достижения
     from achievements import update_streak, update_daily_streak, check_and_unlock_achievements
@@ -251,6 +272,7 @@ async def init_daily_challenge_table():
 
 async def get_daily_challenge() -> Optional[dict]:
     """Получить челлендж дня."""
+    import json
     today = datetime.now(MSK).date()
     
     pool = await get_pool()
@@ -262,27 +284,34 @@ async def get_daily_challenge() -> Optional[dict]:
         """, today)
         
         if row:
+            data = row["challenge_data"]
+            # Парсим JSON если это строка
+            if isinstance(data, str):
+                data = json.loads(data)
+            
             return {
                 "type": row["challenge_type"],
-                "data": row["challenge_data"]
+                "data": data
             }
     
+    return None
     return None
 
 
 async def create_daily_challenge(challenge_type: str, data: dict):
     """Создать челлендж дня."""
+    import json
     today = datetime.now(MSK).date()
     
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO daily_challenges (challenge_date, challenge_type, challenge_data)
-            VALUES ($1, $2, $3)
+            VALUES ($1, $2, $3::jsonb)
             ON CONFLICT (challenge_date) DO UPDATE SET
                 challenge_type = $2,
-                challenge_data = $3
-        """, today, challenge_type, data)
+                challenge_data = $3::jsonb
+        """, today, challenge_type, json.dumps(data))
 
 
 async def complete_daily_challenge(user_id: int) -> dict:

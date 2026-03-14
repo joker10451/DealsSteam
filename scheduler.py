@@ -219,8 +219,7 @@ async def post_hidden_gems():
         score_bar = "⭐" * (gem.score // 20)
         text = (
             f"💎 <b>СКРЫТАЯ ЖЕМЧУЖИНА</b>\n\n"
-            f"🎮 <b>{esc(gem.title)}</b>\n"
-            f"━━━━━━━━━━━━━━\n"
+            f"🎮 <b>{esc(gem.title)}</b>\n\n"
             f"💸 <s>{esc(gem.old_price)}</s>  ➔  ✅ <b>{esc(gem.new_price)}</b>\n"
             f"🏷 Скидка: <b>−{gem.discount}%</b>\n\n"
             f"📊 Рейтинг: <b>{gem.score}%</b> {score_bar}\n"

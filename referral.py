@@ -197,25 +197,22 @@ def format_referral_message(user_id: int, bot_username: str, stats: dict) -> str
     lines = [
         "👥 <b>Реферальная программа</b>\n",
         f"Приглашай друзей и зарабатывай баллы!\n",
-        f"━━━━━━━━━━━━━━\n",
         f"<b>Твоя статистика:</b>",
         f"👤 Приглашено друзей: <b>{total}</b>",
         f"💰 Заработано баллов: <b>{earned}</b>\n",
-        f"━━━━━━━━━━━━━━\n",
         f"<b>Как это работает:</b>",
         f"1. Отправь другу свою ссылку",
         f"2. Друг переходит и начинает играть",
         f"3. Ты получаешь <b>+{REFERRER_BONUS}</b> баллов",
         f"4. Друг получает <b>+{REFEREE_BONUS}</b> баллов\n",
-        f"━━━━━━━━━━━━━━\n",
         f"<b>Твоя реферальная ссылка:</b>",
-        f"<code>{link}</code>\n",
-        f"Скопируй и отправь друзьям!",
+        f'<a href="{link}">👉 Нажми чтобы скопировать</a>\n',
+        f"Или скопируй вручную:",
+        f"<code>{link}</code>",
     ]
     
     if stats["recent"]:
-        lines.append("\n━━━━━━━━━━━━━━\n")
-        lines.append("<b>Последние приглашения:</b>")
+        lines.append("\n<b>Последние приглашения:</b>")
         for ref in stats["recent"]:
             date = ref["created_at"].strftime("%d.%m.%Y")
             lines.append(f"• {date}")

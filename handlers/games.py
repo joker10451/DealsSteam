@@ -86,8 +86,6 @@ async def cmd_games(message: Message):
 Новый челлендж каждый день!
 Награда: 50 баллов
 
-━━━━━━━━━━━━━━
-
 📊 Твоя статистика: /score
 🏆 Таблица лидеров: /leaderboard
 🎯 Челлендж дня: /challenge
@@ -97,7 +95,9 @@ async def cmd_games(message: Message):
 
 @router.message(Command("challenge"))
 async def cmd_challenge(message: Message):
-    """Показать челлендж дня."""
+    """Показать челлендж дня и прогресс."""
+    from daily_challenges import check_challenge_progress, format_challenge_message
+    
     challenge = await get_daily_challenge()
     
     if not challenge:
@@ -107,25 +107,24 @@ async def cmd_challenge(message: Message):
         )
         return
     
-    challenge_type = challenge["type"]
-    data = challenge["data"]
+    # Получаем прогресс пользователя
+    progress = await check_challenge_progress(message.from_user.id)
     
-    if challenge_type == "find_cheapest":
-        # Челлендж: найти самую дешёвую игру
-        text = f"""
-🎯 <b>Челлендж дня</b>
-
-<b>Задание:</b> Найди самую дешёвую игру дня!
-
-Посмотри все скидки в канале и найди игру с самой низкой ценой.
-Напиши боту название этой игры.
-
-Награда: <b>50 баллов</b> 🏆
-
-Подсказка: цена должна быть меньше {data.get('hint', '100')}₽
-"""
-    else:
-        text = "🎯 Челлендж дня скоро появится!"
+    # Форматируем сообщение
+    text = format_challenge_message(challenge)
+    
+    # Добавляем прогресс
+    if progress:
+        text += f"\n\n📊 <b>Твой прогресс:</b>\n"
+        if progress.get("completed"):
+            text += "✅ Челлендж выполнен!"
+        else:
+            text += f"{progress.get('message', 'В процессе...')}\n"
+            if "current" in progress and "target" in progress:
+                bar_length = 10
+                filled = int((progress["progress"] / 100) * bar_length)
+                bar = "█" * filled + "░" * (bar_length - filled)
+                text += f"[{bar}] {progress['progress']}%"
     
     await message.answer(text.strip())
 
@@ -226,30 +225,22 @@ async def cmd_profile(message: Message):
     text = f"""
 👤 <b>Профиль: {esc(username)}</b>
 
-━━━━━━━━━━━━━━
-
 🎮 <b>Мини-игры:</b>
 ⭐️ Баллы: <b>{total}</b>
 🎯 Игр сыграно: <b>{played}</b>
 ✅ Правильных: <b>{correct}</b>
 📊 Точность: <b>{accuracy}%</b>
 
-━━━━━━━━━━━━━━
-
 🔥 <b>Серии:</b>
 ⚡️ Текущая: <b>{extended_stats['current_streak'] if extended_stats else 0}</b>
 🏆 Лучшая: <b>{extended_stats['best_streak'] if extended_stats else 0}</b>
 📅 Дней подряд: <b>{extended_stats['daily_streak'] if extended_stats else 0}</b>
-
-━━━━━━━━━━━━━━
 
 📋 <b>Активность:</b>
 💝 Игр в вишлисте: <b>{wishlist_count}</b>
 🔥 Голосов: <b>{votes_count}</b>
 📸 Скриншотов угадано: <b>{extended_stats['screenshot_correct'] if extended_stats else 0}</b>
 🎯 Челленджей выполнено: <b>{extended_stats['challenges_completed'] if extended_stats else 0}</b>
-
-━━━━━━━━━━━━━━
 
 🏆 <b>Достижения: {unlocked_count}/{total_achievements}</b>
 
@@ -313,16 +304,28 @@ async def show_profile_callback(callback: CallbackQuery):
 
 @router.message(Command("shop"))
 async def cmd_shop(message: Message):
-    """Показать магазин призов."""
-    from rewards import format_rewards_shop, get_user_balance
+    """Показать магазин призов с улучшенным оформлением."""
+    from rewards import format_rewards_shop_improved, get_user_balance
     
     user_id = message.from_user.id
     balance = await get_user_balance(user_id)
     
-    text = format_rewards_shop()
-    text += f"\n\n💰 Твой баланс: <b>{balance}</b> баллов"
+    text = format_rewards_shop_improved(user_id, balance)
     
+    # Создаём кнопки для быстрой покупки популярных призов
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎮 Ключ 5$", callback_data="buy:steam_key_5"),
+            InlineKeyboardButton(text="🎮 Ключ 10$", callback_data="buy:steam_key_10"),
+        ],
+        [
+            InlineKeyboardButton(text="💜 Discord Nitro", callback_data="buy:discord_nitro"),
+            InlineKeyboardButton(text="🎵 Spotify", callback_data="buy:spotify_premium"),
+        ],
+        [
+            InlineKeyboardButton(text="💎 Вишлист", callback_data="buy:custom_wishlist"),
+            InlineKeyboardButton(text="👑 VIP", callback_data="buy:badge_vip"),
+        ],
         [InlineKeyboardButton(text="📦 Мои призы", callback_data="show_my_rewards")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="show_profile")]
     ])
@@ -332,14 +335,14 @@ async def cmd_shop(message: Message):
 
 @router.message(Command("myrewards"))
 async def cmd_my_rewards(message: Message):
-    """Показать купленные призы пользователя."""
-    from rewards import get_user_rewards, get_user_balance, format_user_rewards
+    """Показать купленные призы пользователя с улучшенным оформлением."""
+    from rewards import get_user_rewards, get_user_balance, format_user_rewards_improved
     
     user_id = message.from_user.id
     rewards = await get_user_rewards(user_id)
     balance = await get_user_balance(user_id)
     
-    text = format_user_rewards(rewards, balance)
+    text = format_user_rewards_improved(rewards, balance)
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🏪 Магазин", callback_data="show_shop")],
@@ -443,6 +446,51 @@ async def show_my_rewards_callback(callback: CallbackQuery):
     """Показать призы через callback."""
     await callback.answer()
     await cmd_my_rewards(callback.message)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("buy:"))
+async def buy_reward_callback(callback: CallbackQuery):
+    """Быстрая покупка приза через кнопку."""
+    from rewards import purchase_reward, get_user_balance, get_reward_price, can_purchase_exclusive, REWARDS_CATALOG, EXCLUSIVE_REWARDS
+    
+    reward_id = callback.data.split(":", 1)[1]
+    user_id = callback.from_user.id
+    
+    # Проверяем, существует ли приз
+    if reward_id not in REWARDS_CATALOG and reward_id not in EXCLUSIVE_REWARDS:
+        await callback.answer("❌ Приз не найден", show_alert=True)
+        return
+    
+    # Проверяем доступ к эксклюзивным призам
+    if reward_id in EXCLUSIVE_REWARDS:
+        access = await can_purchase_exclusive(user_id, reward_id)
+        if not access.get("can_purchase"):
+            await callback.answer(access.get("error", "Недоступно"), show_alert=True)
+            return
+    
+    # Получаем информацию о цене
+    price_info = await get_reward_price(reward_id, user_id)
+    reward = REWARDS_CATALOG.get(reward_id) or EXCLUSIVE_REWARDS.get(reward_id)
+    
+    # Покупаем
+    result = await purchase_reward(user_id, reward_id)
+    
+    if "error" in result:
+        await callback.answer(f"❌ {result['error']}", show_alert=True)
+        return
+    
+    # Формируем сообщение об успешной покупке
+    success_text = f"✅ Куплено: {reward['name']}\n"
+    success_text += f"💰 Потрачено: {price_info['final_cost']} баллов\n"
+    success_text += f"💳 Остаток: {result['new_balance']} баллов"
+    
+    if price_info.get("has_promotion"):
+        success_text += f"\n🔥 Скидка: -{price_info['discount']}%"
+    
+    await callback.answer(success_text, show_alert=True)
+    
+    # Обновляем сообщение с магазином
+    await cmd_shop(callback.message)
 
 
 @router.message(Command("invite"))

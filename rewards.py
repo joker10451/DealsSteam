@@ -3,7 +3,7 @@
 """
 import logging
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytz
 from database import get_pool
@@ -14,62 +14,149 @@ MSK = pytz.timezone("Europe/Moscow")
 
 # Каталог призов
 REWARDS_CATALOG = {
+    # Подписки
     "priority_notify": {
         "name": "⚡️ Приоритетные уведомления",
-        "description": "Получай уведомления о скидках на 5 минут раньше всех (на 7 дней)",
+        "description": "Получай уведомления о скидках на 5 минут раньше всех",
         "cost": 200,
         "type": "subscription",
         "duration_days": 7,
+        "category": "subscriptions",
+        "emoji": "⚡️",
     },
     "custom_wishlist": {
         "name": "💎 Расширенный вишлист",
-        "description": "Увеличь лимит вишлиста с 20 до 50 игр (на 30 дней)",
+        "description": "Увеличь лимит вишлиста с 20 до 50 игр",
         "cost": 300,
         "type": "subscription",
         "duration_days": 30,
+        "category": "subscriptions",
+        "emoji": "💎",
     },
     "exclusive_deals": {
         "name": "🔥 Эксклюзивные скидки",
-        "description": "Доступ к закрытому каналу с эксклюзивными скидками (на 30 дней)",
+        "description": "Доступ к закрытому каналу с эксклюзивными скидками",
         "cost": 500,
         "type": "subscription",
         "duration_days": 30,
+        "category": "subscriptions",
+        "emoji": "🔥",
     },
+    
+    # Steam ключи
     "steam_key_5": {
         "name": "🎮 Steam ключ 5$",
         "description": "Случайный Steam ключ на игру стоимостью ~5$",
         "cost": 1000,
         "type": "one_time",
+        "category": "games",
+        "emoji": "🎮",
     },
     "steam_key_10": {
         "name": "🎮 Steam ключ 10$",
         "description": "Случайный Steam ключ на игру стоимостью ~10$",
         "cost": 1800,
         "type": "one_time",
+        "category": "games",
+        "emoji": "🎮",
     },
     "steam_key_20": {
         "name": "🎮 Steam ключ 20$",
         "description": "Случайный Steam ключ на игру стоимостью ~20$",
         "cost": 3500,
         "type": "one_time",
+        "category": "games",
+        "emoji": "🎮",
     },
+    
+    # Новые призы - подписки на сервисы
+    "discord_nitro": {
+        "name": "💜 Discord Nitro",
+        "description": "Discord Nitro на 1 месяц",
+        "cost": 2500,
+        "type": "one_time",
+        "category": "services",
+        "emoji": "💜",
+    },
+    "spotify_premium": {
+        "name": "🎵 Spotify Premium",
+        "description": "Spotify Premium на 1 месяц",
+        "cost": 2200,
+        "type": "one_time",
+        "category": "services",
+        "emoji": "🎵",
+    },
+    "xbox_gamepass": {
+        "name": "🎮 Xbox Game Pass",
+        "description": "Xbox Game Pass PC на 1 месяц",
+        "cost": 2800,
+        "type": "one_time",
+        "category": "services",
+        "emoji": "🎮",
+    },
+    
+    # Разовые услуги
     "personal_deal": {
         "name": "🎯 Персональная подборка",
         "description": "Получи персональную подборку из 10 игр по твоим предпочтениям",
         "cost": 150,
         "type": "one_time",
+        "category": "services",
+        "emoji": "🎯",
     },
+    
+    # Значки и статусы
     "badge_vip": {
         "name": "👑 VIP значок",
         "description": "Эксклюзивный VIP значок в профиле (навсегда)",
         "cost": 2000,
         "type": "permanent",
+        "category": "badges",
+        "emoji": "👑",
     },
     "badge_legend": {
         "name": "🏆 Значок легенды",
         "description": "Легендарный значок в профиле (навсегда)",
         "cost": 5000,
         "type": "permanent",
+        "category": "badges",
+        "emoji": "🏆",
+    },
+    "badge_founder": {
+        "name": "⭐️ Значок основателя",
+        "description": "Эксклюзивный значок для первых 100 пользователей (навсегда)",
+        "cost": 3000,
+        "type": "permanent",
+        "category": "badges",
+        "emoji": "⭐️",
+        "limited": 100,
+    },
+}
+
+# Временные акции (скидки на призы)
+ACTIVE_PROMOTIONS = {
+    # Пример: "steam_key_10": {"discount": 20, "until": "2024-12-31"}
+}
+
+# Эксклюзивные призы для топ-игроков (требуют определённое место в рейтинге)
+EXCLUSIVE_REWARDS = {
+    "golden_badge": {
+        "name": "🥇 Золотой значок",
+        "description": "Эксклюзивный золотой значок для топ-3 игроков (навсегда)",
+        "cost": 10000,
+        "type": "permanent",
+        "category": "exclusive",
+        "emoji": "🥇",
+        "required_rank": 3,  # Нужно быть в топ-3
+    },
+    "platinum_badge": {
+        "name": "💎 Платиновый значок",
+        "description": "Эксклюзивный платиновый значок для топ-10 игроков (навсегда)",
+        "cost": 7500,
+        "type": "permanent",
+        "category": "exclusive",
+        "emoji": "💎",
+        "required_rank": 10,  # Нужно быть в топ-10
     },
 }
 
@@ -313,5 +400,233 @@ def format_user_rewards(rewards: List[dict], balance: int) -> str:
             lines.append("❗️ Используй /claim для получения ключа")
         
         lines.append("")
+    
+    return "\n".join(lines)
+
+
+# ============================================================================
+# Новые функции для улучшенного магазина
+# ============================================================================
+
+async def get_user_rank(user_id: int) -> int:
+    """Получить место пользователя в рейтинге."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rank = await conn.fetchval("""
+            SELECT COUNT(*) + 1
+            FROM user_scores
+            WHERE total_score > (
+                SELECT total_score FROM user_scores WHERE user_id = $1
+            )
+        """, user_id)
+        return rank or 999
+
+
+async def get_reward_price(reward_id: str, user_id: int = None) -> dict:
+    """Получить цену приза с учётом акций."""
+    if reward_id not in REWARDS_CATALOG and reward_id not in EXCLUSIVE_REWARDS:
+        return {"error": "Приз не найден"}
+    
+    reward = REWARDS_CATALOG.get(reward_id) or EXCLUSIVE_REWARDS.get(reward_id)
+    original_cost = reward["cost"]
+    final_cost = original_cost
+    discount = 0
+    
+    # Проверяем акции
+    if reward_id in ACTIVE_PROMOTIONS:
+        promo = ACTIVE_PROMOTIONS[reward_id]
+        discount = promo.get("discount", 0)
+        final_cost = int(original_cost * (1 - discount / 100))
+    
+    return {
+        "original_cost": original_cost,
+        "final_cost": final_cost,
+        "discount": discount,
+        "has_promotion": discount > 0,
+    }
+
+
+async def can_purchase_exclusive(user_id: int, reward_id: str) -> dict:
+    """Проверить, может ли пользователь купить эксклюзивный приз."""
+    if reward_id not in EXCLUSIVE_REWARDS:
+        return {"can_purchase": True}
+    
+    reward = EXCLUSIVE_REWARDS[reward_id]
+    required_rank = reward.get("required_rank", 999)
+    
+    user_rank = await get_user_rank(user_id)
+    
+    if user_rank > required_rank:
+        return {
+            "can_purchase": False,
+            "error": f"Нужно быть в топ-{required_rank}. Твоё место: {user_rank}",
+            "required_rank": required_rank,
+            "user_rank": user_rank,
+        }
+    
+    return {"can_purchase": True, "user_rank": user_rank}
+
+
+async def reserve_reward(user_id: int, reward_id: str) -> dict:
+    """Забронировать приз (для ограниченных призов)."""
+    if reward_id not in REWARDS_CATALOG:
+        return {"error": "Приз не найден"}
+    
+    reward = REWARDS_CATALOG[reward_id]
+    
+    # Проверяем, есть ли лимит
+    if "limited" not in reward:
+        return {"error": "Этот приз нельзя забронировать"}
+    
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Проверяем, сколько уже куплено
+        sold_count = await conn.fetchval("""
+            SELECT COUNT(*) FROM user_rewards WHERE reward_id = $1
+        """, reward_id)
+        
+        if sold_count >= reward["limited"]:
+            return {"error": "Все экземпляры этого приза уже раскуплены!"}
+        
+        # Проверяем баланс
+        balance = await get_user_balance(user_id)
+        price_info = await get_reward_price(reward_id, user_id)
+        
+        if balance < price_info["final_cost"]:
+            return {
+                "error": f"Недостаточно баллов. Нужно: {price_info['final_cost']}, у тебя: {balance}",
+                "needed": price_info["final_cost"] - balance,
+            }
+        
+        # Создаём бронь (покупаем приз)
+        result = await purchase_reward(user_id, reward_id)
+        
+        if "success" in result:
+            remaining = reward["limited"] - sold_count - 1
+            result["remaining"] = remaining
+            result["limited"] = reward["limited"]
+        
+        return result
+
+
+def format_rewards_shop_improved(user_id: int = None, balance: int = 0) -> str:
+    """Улучшенное форматирование магазина с категориями и акциями."""
+    from html import escape as esc
+    
+    lines = [
+        "🏪 <b>МАГАЗИН ПРИЗОВ</b>",
+        f"💰 Твой баланс: <b>{balance}</b> баллов\n",
+    ]
+    
+    # Группируем по категориям
+    categories = {
+        "subscriptions": {"name": "📅 Подписки", "items": []},
+        "games": {"name": "🎮 Игровые ключи", "items": []},
+        "services": {"name": "🌟 Подписки на сервисы", "items": []},
+        "badges": {"name": "⭐️ Значки и статусы", "items": []},
+    }
+    
+    for reward_id, reward in REWARDS_CATALOG.items():
+        category = reward.get("category", "other")
+        if category not in categories:
+            continue
+        
+        # Получаем цену с учётом акций
+        original_cost = reward["cost"]
+        final_cost = original_cost
+        discount_text = ""
+        
+        if reward_id in ACTIVE_PROMOTIONS:
+            promo = ACTIVE_PROMOTIONS[reward_id]
+            discount = promo.get("discount", 0)
+            final_cost = int(original_cost * (1 - discount / 100))
+            discount_text = f" 🔥 <s>{original_cost}</s> → <b>{final_cost}</b> (-{discount}%)"
+        else:
+            discount_text = f" <b>{final_cost}</b> баллов"
+        
+        # Проверяем лимит
+        limited_text = ""
+        if "limited" in reward:
+            limited_text = f" ⚠️ Осталось: {reward['limited']}"
+        
+        # Проверяем длительность
+        duration_text = ""
+        if reward["type"] == "subscription":
+            days = reward.get("duration_days", 0)
+            duration_text = f" ({days} дн.)"
+        elif reward["type"] == "permanent":
+            duration_text = " (навсегда)"
+        
+        item = (
+            f"{reward['emoji']} <b>{reward['name']}</b>{duration_text}\n"
+            f"   {esc(reward['description'])}\n"
+            f"   💰{discount_text}{limited_text}"
+        )
+        
+        categories[category]["items"].append(item)
+    
+    # Выводим категории
+    for cat_data in categories.values():
+        if cat_data["items"]:
+            lines.append(f"\n{cat_data['name']}:")
+            lines.extend(cat_data["items"])
+    
+    lines.append("\n💡 <b>Как купить:</b>")
+    lines.append("Используй кнопки ниже или команду /buy")
+    
+    return "\n".join(lines)
+
+
+def format_user_rewards_improved(rewards: List[dict], balance: int) -> str:
+    """Улучшенное форматирование призов пользователя."""
+    from html import escape as esc
+    
+    lines = [
+        "📦 <b>МОИ ПРИЗЫ</b>",
+        f"💰 Баланс: <b>{balance}</b> баллов\n",
+    ]
+    
+    if not rewards:
+        lines.append("📭 У тебя пока нет призов")
+        lines.append("\n💡 Зарабатывай баллы в мини-играх")
+        lines.append("и покупай крутые призы в /shop!")
+        return "\n".join(lines)
+    
+    # Группируем по статусу
+    active = []
+    expired = []
+    unclaimed = []
+    
+    for reward in rewards:
+        if not reward.get("is_claimed", True) and "ключ" in reward["name"].lower():
+            unclaimed.append(reward)
+        elif reward.get("expires_at") and reward["expires_at"] < datetime.now(MSK):
+            expired.append(reward)
+        else:
+            active.append(reward)
+    
+    # Неактивированные призы
+    if unclaimed:
+        lines.append("🎁 <b>Ожидают активации:</b>")
+        for reward in unclaimed:
+            lines.append(f"   {reward['name']}")
+            lines.append(f"   ❗️ Используй /claim для получения")
+        lines.append("")
+    
+    # Активные призы
+    if active:
+        lines.append("✅ <b>Активные призы:</b>")
+        for reward in active:
+            lines.append(f"   {reward['name']}")
+            
+            if reward.get("expires_at"):
+                expires = reward["expires_at"].strftime("%d.%m.%Y")
+                days_left = (reward["expires_at"] - datetime.now(MSK)).days
+                lines.append(f"   ⏳ До {expires} ({days_left} дн.)")
+            else:
+                lines.append(f"   ♾ Навсегда")
+        lines.append("")
+    
+    lines.append("💡 Используй /shop для покупки новых призов")
     
     return "\n".join(lines)
