@@ -443,3 +443,51 @@ async def show_my_rewards_callback(callback: CallbackQuery):
     """Показать призы через callback."""
     await callback.answer()
     await cmd_my_rewards(callback.message)
+
+
+@router.message(Command("invite"))
+async def cmd_invite(message: Message):
+    """Показать реферальную ссылку и статистику."""
+    from referral import get_referral_stats, format_referral_message
+    from config import BOT_TOKEN
+    
+    user_id = message.from_user.id
+    
+    # Получаем username бота из токена
+    bot_username = (await message.bot.get_me()).username
+    
+    stats = await get_referral_stats(user_id)
+    text = format_referral_message(user_id, bot_username, stats)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Топ рефереров", callback_data="show_top_referrers")],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="show_profile")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(lambda c: c.data == "show_top_referrers")
+async def show_top_referrers_callback(callback: CallbackQuery):
+    """Показать топ рефереров."""
+    from referral import get_top_referrers, REFERRER_BONUS
+    
+    top = await get_top_referrers(10)
+    
+    if not top:
+        await callback.answer("Пока никто не пригласил друзей", show_alert=True)
+        return
+    
+    lines = ["🏆 <b>Топ рефереров</b>\n"]
+    
+    medals = ["🥇", "🥈", "🥉"]
+    for i, ref in enumerate(top, 1):
+        medal = medals[i-1] if i <= 3 else f"{i}."
+        count = ref["referral_count"]
+        earned = ref["total_earned"]
+        lines.append(f"{medal} <b>{count}</b> друзей ({earned} баллов)")
+    
+    lines.append(f"\n💡 Приглашай друзей: /invite")
+    
+    await callback.answer()
+    await callback.message.answer("\n".join(lines))

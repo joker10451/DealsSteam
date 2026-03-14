@@ -48,25 +48,49 @@ def main_keyboard() -> ReplyKeyboardMarkup:
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
+    user_id = message.from_user.id
+    
+    # Проверяем реферальный код
+    start_param = None
+    if message.text and len(message.text.split()) > 1:
+        start_param = message.text.split()[1]
+    
+    # Обрабатываем реферальную ссылку
+    referral_bonus_text = ""
+    if start_param:
+        from referral import check_and_apply_referral
+        result = await check_and_apply_referral(user_id, start_param)
+        
+        if result and "success" in result:
+            referral_bonus_text = (
+                f"\n\n🎉 <b>Бонус за приглашение!</b>\n"
+                f"Ты получил <b>+{result['referee_bonus']}</b> баллов\n"
+                f"Твой друг получил <b>+{result['referrer_bonus']}</b> баллов\n"
+            )
+    
     await message.answer(
         "👋 Привет! Я слежу за скидками на игры.\n\n"
         "<b>Что я умею:</b>\n"
-        "• Напиши название игры — добавлю в вишлист и уведомлю при скидке\n\n"
-        "<b>Команды:</b>\n"
+        "• Напиши название игры — добавлю в вишлист и уведомлю при скидке\n"
+        "• Играй в мини-игры и зарабатывай баллы\n"
+        "• Обменивай баллы на Steam ключи и призы\n\n"
+        "<b>Основные команды:</b>\n"
         "/wishlist — посмотреть вишлист\n"
-        "/remove [название] — удалить из вишлиста\n"
-        "/cancel — удалить из вишлиста кнопками\n"
-        "/genre [жанр] — подписаться на уведомления по жанру\n"
-        "/genres — мои подписки на жанры\n"
+        "/games — мини-игры\n"
+        "/shop — магазин призов\n"
+        "/invite — пригласи друга и получи 100 баллов\n"
+        "/profile — мой профиль\n\n"
+        "<b>Дополнительно:</b>\n"
         "/top — топ скидок прямо сейчас\n"
-        "/price [ссылка или название] — цены по регионам Steam\n"
-        "/find [тег] — найти скидки по жанру (coop, rpg, horror...)\n"
+        "/price [ссылка] — цены по регионам\n"
+        "/find [тег] — найти по жанру\n"
+        + referral_bonus_text
         + (
             "\n<b>Админ:</b>\n"
-            "/post — опубликовать скидки прямо сейчас\n"
-            "/gems — опубликовать скрытые жемчужины\n"
-            "/digest — опубликовать дайджест недели\n"
-            "/stats — метрики за 7 дней"
+            "/post — опубликовать скидки\n"
+            "/gems — скрытые жемчужины\n"
+            "/digest — дайджест недели\n"
+            "/stats — метрики"
             if message.from_user.id == ADMIN_ID else ""
         ),
         reply_markup=main_keyboard(),

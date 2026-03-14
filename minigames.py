@@ -341,4 +341,8 @@ async def init_minigames_db():
     from rewards import init_rewards_table
     await init_rewards_table()
     
-    log.info("Таблицы мини-игр, достижений и призов инициализированы")
+    # Инициализируем реферальную систему
+    from referral import init_referral_table
+    await init_referral_table()
+    
+    log.info("Таблицы мини-игр, достижений, призов и рефералов инициализированы")

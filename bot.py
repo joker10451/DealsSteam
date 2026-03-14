@@ -67,6 +67,7 @@ async def main():
         BotCommand(command="shop", description="Магазин призов"),
         BotCommand(command="myrewards", description="Мои призы"),
         BotCommand(command="buy", description="Купить приз"),
+        BotCommand(command="invite", description="Пригласить друга"),
     ]
     # Команды для админа (включают всё)
     admin_commands = user_commands + [
