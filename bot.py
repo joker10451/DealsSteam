@@ -64,6 +64,9 @@ async def main():
         BotCommand(command="profile", description="Мой профиль"),
         BotCommand(command="achievements", description="Мои достижения"),
         BotCommand(command="challenge", description="Челлендж дня"),
+        BotCommand(command="shop", description="Магазин призов"),
+        BotCommand(command="myrewards", description="Мои призы"),
+        BotCommand(command="buy", description="Купить приз"),
     ]
     # Команды для админа (включают всё)
     admin_commands = user_commands + [
@@ -71,6 +74,9 @@ async def main():
         BotCommand(command="gems", description="Опубликовать жемчужины"),
         BotCommand(command="digest", description="Опубликовать дайджест"),
         BotCommand(command="stats", description="Метрики за 7 дней"),
+        BotCommand(command="givekey", description="Выдать Steam ключ"),
+        BotCommand(command="addpoints", description="Начислить баллы"),
+        BotCommand(command="rewardstats", description="Статистика призов"),
     ]
 
     await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())

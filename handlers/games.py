@@ -309,3 +309,137 @@ async def show_profile_callback(callback: CallbackQuery):
     """Показать профиль через callback."""
     await callback.answer()
     await cmd_profile(callback.message)
+
+
+@router.message(Command("shop"))
+async def cmd_shop(message: Message):
+    """Показать магазин призов."""
+    from rewards import format_rewards_shop, get_user_balance
+    
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+    
+    text = format_rewards_shop()
+    text += f"\n\n💰 Твой баланс: <b>{balance}</b> баллов"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Мои призы", callback_data="show_my_rewards")],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="show_profile")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.message(Command("myrewards"))
+async def cmd_my_rewards(message: Message):
+    """Показать купленные призы пользователя."""
+    from rewards import get_user_rewards, get_user_balance, format_user_rewards
+    
+    user_id = message.from_user.id
+    rewards = await get_user_rewards(user_id)
+    balance = await get_user_balance(user_id)
+    
+    text = format_user_rewards(rewards, balance)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏪 Магазин", callback_data="show_shop")],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="show_profile")]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.message(Command("buy"))
+async def cmd_buy(message: Message):
+    """Купить приз за баллы."""
+    from rewards import REWARDS_CATALOG, purchase_reward
+    
+    user_id = message.from_user.id
+    args = message.text.split(maxsplit=1)
+    
+    if len(args) < 2:
+        # Показываем список доступных призов с ID
+        lines = ["🏪 <b>Доступные призы:</b>\n"]
+        for reward_id, reward in REWARDS_CATALOG.items():
+            lines.append(f"<code>{reward_id}</code> — {reward['name']}")
+            lines.append(f"💰 {reward['cost']} баллов\n")
+        
+        lines.append("Используй: /buy [id_приза]")
+        await message.answer("\n".join(lines))
+        return
+    
+    reward_id = args[1].strip()
+    
+    result = await purchase_reward(user_id, reward_id)
+    
+    if "error" in result:
+        await message.answer(f"❌ {result['error']}")
+        return
+    
+    reward = result["reward"]
+    text = f"""
+✅ <b>Приз куплен!</b>
+
+{reward['name']}
+{esc(reward['description'])}
+
+💰 Списано: <b>{result['cost']}</b> баллов
+💳 Новый баланс: <b>{result['new_balance']}</b> баллов
+
+📦 Используй /myrewards для просмотра призов
+"""
+    
+    # Если это ключ, уведомляем админа
+    if "steam_key" in reward_id:
+        from publisher import notify_admin
+        username = message.from_user.username or f"ID: {user_id}"
+        await notify_admin(
+            f"🎮 Новая покупка ключа!\n\n"
+            f"Пользователь: @{username}\n"
+            f"Приз: {reward['name']}\n"
+            f"Стоимость: {result['cost']} баллов\n\n"
+            f"Используй /givekey {user_id} [ключ] для выдачи"
+        )
+    
+    await message.answer(text.strip())
+
+
+@router.message(Command("claim"))
+async def cmd_claim(message: Message):
+    """Активировать приз (получить ключ)."""
+    from rewards import get_user_rewards
+    
+    user_id = message.from_user.id
+    rewards = await get_user_rewards(user_id)
+    
+    # Ищем неактивированные ключи
+    unclaimed = [r for r in rewards if not r["is_claimed"] and "ключ" in r["name"].lower()]
+    
+    if not unclaimed:
+        await message.answer("У тебя нет неактивированных ключей.")
+        return
+    
+    text = """
+🎮 <b>Твои ключи ожидают активации</b>
+
+Администратор скоро отправит тебе ключи в личные сообщения.
+Обычно это занимает до 24 часов.
+
+Если прошло больше времени, напиши @Joker104_97
+"""
+    
+    await message.answer(text.strip())
+
+
+@router.callback_query(lambda c: c.data == "show_shop")
+async def show_shop_callback(callback: CallbackQuery):
+    """Показать магазин через callback."""
+    await callback.answer()
+    await cmd_shop(callback.message)
+
+
+@router.callback_query(lambda c: c.data == "show_my_rewards")
+async def show_my_rewards_callback(callback: CallbackQuery):
+    """Показать призы через callback."""
+    await callback.answer()
+    await cmd_my_rewards(callback.message)

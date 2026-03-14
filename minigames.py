@@ -337,4 +337,8 @@ async def init_minigames_db():
     from achievements import init_achievements_table
     await init_achievements_table()
     
-    log.info("Таблицы мини-игр и достижений инициализированы")
+    # Инициализируем таблицу призов
+    from rewards import init_rewards_table
+    await init_rewards_table()
+    
+    log.info("Таблицы мини-игр, достижений и призов инициализированы")
