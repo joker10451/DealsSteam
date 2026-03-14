@@ -63,7 +63,7 @@ async def test_init_db_creates_all_tables():
     """
     await database.init_db()
     pool = await database.get_pool()
-    expected = {"posted_deals", "wishlist", "votes", "price_game", "steam_users"}
+    expected = {"posted_deals", "wishlist", "votes", "price_game", "steam_users", "onboarding_progress", "onboarding_hints"}
     rows = await pool.fetch(
         "SELECT table_name FROM information_schema.tables "
         "WHERE table_schema = 'public' AND table_name = ANY($1::text[])",
@@ -1560,3 +1560,168 @@ async def test_free_game_subscribe_unsubscribe_round_trip():
         assert result3 is False, "Повторная отписка должна вернуть False"
     finally:
         await _delete_free_game_sub(user_id)
+
+
+# ---------------------------------------------------------------------------
+# Onboarding Tables Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_init_onboarding_tables_creates_tables():
+    """WHEN init_onboarding_tables() вызывается, THE Database SHALL создать таблицы onboarding_progress и onboarding_hints.
+    
+    Validates: Requirements 7.1, 7.2, 7.3, 7.4
+    """
+    pool = await database.get_pool()
+    async with pool.acquire() as conn:
+        await database.init_onboarding_tables(conn)
+    
+    # Проверяем, что таблицы созданы
+    expected = {"onboarding_progress", "onboarding_hints"}
+    rows = await pool.fetch(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = ANY($1::text[])",
+        list(expected),
+    )
+    found = {r["table_name"] for r in rows}
+    assert found == expected, f"Отсутствуют таблицы: {expected - found}"
+
+
+@pytest.mark.asyncio
+async def test_onboarding_progress_table_structure():
+    """WHEN onboarding_progress таблица создана, THE Database SHALL иметь все необходимые поля.
+    
+    Validates: Requirements 7.2
+    """
+    pool = await database.get_pool()
+    async with pool.acquire() as conn:
+        await database.init_onboarding_tables(conn)
+    
+    # Проверяем структуру таблицы onboarding_progress
+    rows = await pool.fetch("""
+        SELECT column_name, data_type, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'onboarding_progress'
+        ORDER BY ordinal_position
+    """)
+    
+    columns = {r["column_name"]: r["data_type"] for r in rows}
+    
+    # Проверяем наличие всех необходимых полей
+    assert "user_id" in columns, "Должно быть поле user_id"
+    assert "current_step" in columns, "Должно быть поле current_step"
+    assert "status" in columns, "Должно быть поле status"
+    assert "completed_at" in columns, "Должно быть поле completed_at"
+    assert "skipped_at" in columns, "Должно быть поле skipped_at"
+    assert "created_at" in columns, "Должно быть поле created_at"
+    assert "updated_at" in columns, "Должно быть поле updated_at"
+    
+    # Проверяем типы данных
+    assert columns["user_id"] == "bigint", "user_id должен быть bigint"
+    assert columns["current_step"] == "integer", "current_step должен быть integer"
+    assert columns["status"] == "text", "status должен быть text"
+    assert "timestamp" in columns["completed_at"], "completed_at должен быть timestamptz"
+    assert "timestamp" in columns["skipped_at"], "skipped_at должен быть timestamptz"
+    assert "timestamp" in columns["created_at"], "created_at должен быть timestamptz"
+    assert "timestamp" in columns["updated_at"], "updated_at должен быть timestamptz"
+
+
+@pytest.mark.asyncio
+async def test_onboarding_hints_table_structure():
+    """WHEN onboarding_hints таблица создана, THE Database SHALL иметь все необходимые поля и индекс.
+    
+    Validates: Requirements 7.3, 7.4
+    """
+    pool = await database.get_pool()
+    async with pool.acquire() as conn:
+        await database.init_onboarding_tables(conn)
+    
+    # Проверяем структуру таблицы onboarding_hints
+    rows = await pool.fetch("""
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'onboarding_hints'
+        ORDER BY ordinal_position
+    """)
+    
+    columns = {r["column_name"]: r["data_type"] for r in rows}
+    
+    # Проверяем наличие всех необходимых полей
+    assert "id" in columns, "Должно быть поле id"
+    assert "user_id" in columns, "Должно быть поле user_id"
+    assert "hint_type" in columns, "Должно быть поле hint_type"
+    assert "shown_at" in columns, "Должно быть поле shown_at"
+    
+    # Проверяем типы данных
+    assert columns["id"] == "integer", "id должен быть integer (SERIAL)"
+    assert columns["user_id"] == "bigint", "user_id должен быть bigint"
+    assert columns["hint_type"] == "text", "hint_type должен быть text"
+    assert "timestamp" in columns["shown_at"], "shown_at должен быть timestamptz"
+
+
+@pytest.mark.asyncio
+async def test_onboarding_hints_unique_constraint():
+    """WHEN onboarding_hints таблица создана, THE Database SHALL иметь уникальное ограничение на (user_id, hint_type).
+    
+    Validates: Requirements 7.3
+    """
+    pool = await database.get_pool()
+    async with pool.acquire() as conn:
+        await database.init_onboarding_tables(conn)
+    
+    # Проверяем наличие уникального ограничения
+    rows = await pool.fetch("""
+        SELECT constraint_name, constraint_type
+        FROM information_schema.table_constraints
+        WHERE table_schema = 'public' 
+        AND table_name = 'onboarding_hints'
+        AND constraint_type = 'UNIQUE'
+    """)
+    
+    assert len(rows) > 0, "Должно быть уникальное ограничение на onboarding_hints"
+
+
+@pytest.mark.asyncio
+async def test_onboarding_hints_index_exists():
+    """WHEN onboarding_hints таблица создана, THE Database SHALL иметь индекс на user_id.
+    
+    Validates: Requirements 7.4
+    """
+    pool = await database.get_pool()
+    async with pool.acquire() as conn:
+        await database.init_onboarding_tables(conn)
+    
+    # Проверяем наличие индекса
+    rows = await pool.fetch("""
+        SELECT indexname
+        FROM pg_indexes
+        WHERE schemaname = 'public' 
+        AND tablename = 'onboarding_hints'
+        AND indexname = 'idx_onboarding_hints_user'
+    """)
+    
+    assert len(rows) == 1, "Должен существовать индекс idx_onboarding_hints_user"
+
+
+@pytest.mark.asyncio
+async def test_onboarding_tables_idempotent():
+    """WHEN init_onboarding_tables() вызывается дважды, THE Database SHALL не бросать исключение.
+    
+    Validates: Requirements 7.1
+    """
+    pool = await database.get_pool()
+    async with pool.acquire() as conn:
+        # Первый вызов
+        await database.init_onboarding_tables(conn)
+        # Второй вызов не должен бросить исключение
+        await database.init_onboarding_tables(conn)
+    
+    # Проверяем, что таблицы все еще существуют
+    expected = {"onboarding_progress", "onboarding_hints"}
+    rows = await pool.fetch(
+        "SELECT table_name FROM information_schema.tables "
+        "WHERE table_schema = 'public' AND table_name = ANY($1::text[])",
+        list(expected),
+    )
+    found = {r["table_name"] for r in rows}
+    assert found == expected, "Таблицы должны существовать после повторного вызова"

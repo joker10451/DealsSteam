@@ -21,6 +21,7 @@ from enricher import get_steam_rating, get_historical_low, generate_comment, gen
 from igdb import get_game_info
 from collage import make_collage
 from currency import to_rubles, format_rub
+from price_glitch import check_for_glitch, format_glitch_alert
 
 log = logging.getLogger(__name__)
 MSK = pytz.timezone("Europe/Moscow")
@@ -92,10 +93,24 @@ async def _localize_price(price_str: str) -> str:
     return format_rub(rub) if rub else price_str.lstrip("~")
 
 
-async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool:
+async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_priority: bool = False) -> bool:
+    """
+    Публикует сделку в канал.
+    
+    Args:
+        deal: Объект Deal для публикации
+        prefetched_rating: Предзагруженный рейтинг (опционально)
+        is_priority: Если True, публикуется немедленно (для glitch'ей и бесплатных игр)
+    
+    Returns:
+        True если публикация успешна
+    """
     now = datetime.now(MSK).strftime("%d.%m.%Y")
     store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(deal.store, "🕹")
 
+    # Проверяем на ошибку цены
+    glitch_info = await check_for_glitch(deal)
+    
     rating = prefetched_rating
     historical_low = None
     igdb_info = None
@@ -126,7 +141,12 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
     adult_prefix = "🔞 " if (igdb_info and igdb_info.get("is_adult")) else ""
     
     # Заголовок с улучшенным форматированием
-    if deal.is_free:
+    # Приоритет: ошибка цены > бесплатно > исторический минимум > огонь-скидка > тема дня
+    if glitch_info and glitch_info.get('severity') == 'critical':
+        lines.append(f"🚨 <b>{adult_prefix}ОШИБКА ЦЕНЫ? СРОЧНО! · {now}</b>")
+    elif glitch_info and glitch_info.get('severity') == 'high':
+        lines.append(f"🔥 <b>{adult_prefix}АНОМАЛЬНАЯ СКИДКА! · {now}</b>")
+    elif deal.is_free:
         lines.append(f"🎁 <b>{adult_prefix}БЕСПЛАТНО · {now}</b>")
     elif is_historic:
         lines.append(f"⚡️ <b>{adult_prefix}ИСТОРИЧЕСКИЙ МИНИМУМ · {now}</b>")
@@ -172,6 +192,11 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None) -> bool
         low_rub = await to_rubles(float(historical_low["price"]), "USD")
         if low_rub:
             lines.append(f"📉 Истор. минимум: <b>{format_rub(low_rub)}</b>")
+    
+    # Предупреждение об ошибке цены (если обнаружена)
+    if glitch_info:
+        glitch_alert = format_glitch_alert(deal, glitch_info)
+        lines.append(f"\n{glitch_alert}")
 
     # Описание игры
     if igdb_info and igdb_info.get("description"):
@@ -373,6 +398,31 @@ async def notify_admin(text: str):
             await get_bot().send_message(ADMIN_ID, f"⚠️ <b>GameDealsBot</b>\n\n{esc(text)}")
         except Exception:
             pass
+
+
+async def notify_free_game_subscribers(deal):
+    """
+    Уведомляет подписчиков о бесплатных играх.
+    
+    Args:
+        deal: Объект Deal с бесплатной игрой
+    """
+    from database import free_game_get_subscribers
+    
+    if not deal.is_free:
+        return
+    
+    subscribers = await free_game_get_subscribers()
+    if not subscribers:
+        return
+    
+    await notify_users(
+        subscribers,
+        deal,
+        "🎁 <b>Новая бесплатная игра!</b>"
+    )
+    await increment_metric("free_game_notify", len(subscribers))
+    log.info(f"Уведомлено {len(subscribers)} подписчиков о бесплатной игре: {deal.title}")
 
 
 async def publish_screenshot_game(deal, igdb_info):

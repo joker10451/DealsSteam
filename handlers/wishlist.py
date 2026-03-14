@@ -11,6 +11,7 @@ from config import ADMIN_ID
 from database import (
     wishlist_add, wishlist_remove, wishlist_list,
     genre_subscribe, genre_unsubscribe, genre_list,
+    free_game_subscribe, free_game_unsubscribe,
 )
 
 router = Router()
@@ -73,9 +74,11 @@ async def cmd_start(message: Message):
         "<b>Что я умею:</b>\n"
         "• Напиши название игры — добавлю в вишлист и уведомлю при скидке\n"
         "• Играй в мини-игры и зарабатывай баллы\n"
-        "• Обменивай баллы на Steam ключи и призы\n\n"
+        "• Обменивай баллы на Steam ключи и призы\n"
+        "• Ловлю ошибки цен и бесплатные игры\n\n"
         "<b>Основные команды:</b>\n"
         "/wishlist — посмотреть вишлист\n"
+        "/free — подписаться на бесплатные игры\n"
         "/games — мини-игры\n"
         "/shop — магазин призов\n"
         "/invite — пригласи друга и получи 100 баллов\n"
@@ -84,6 +87,7 @@ async def cmd_start(message: Message):
         "/top — топ скидок прямо сейчас\n"
         "/price [ссылка] — цены по регионам\n"
         "/find [тег] — найти по жанру\n"
+        "/genre [жанр] — подписаться на жанр\n"
         + referral_bonus_text
         + (
             "\n<b>Админ:</b>\n"
@@ -241,5 +245,47 @@ async def handle_wishlist_add(message: Message):
             "Пришлю уведомление когда появится скидка.",
             reply_markup=main_keyboard(),
         )
+        
+        # Show hint after first wishlist add
+        from onboarding import show_hint
+        from publisher import send_with_retry
+        hint_text = await show_hint(message.from_user.id, "wishlist_vote")
+        if hint_text:
+            await send_with_retry(lambda: message.answer(hint_text))
     else:
         await message.answer(f"«{esc(query)}» уже есть в твоём вишлисте.")
+
+
+@router.message(Command("free"))
+async def cmd_free_subscribe(message: Message):
+    """Подписка на уведомления о бесплатных играх."""
+    subscribed = await free_game_subscribe(message.from_user.id)
+    if subscribed:
+        await message.answer(
+            "🎁 <b>Подписка активирована!</b>\n\n"
+            "Теперь ты будешь получать уведомления о бесплатных играх "
+            "в Steam, GOG и Epic Games Store.\n\n"
+            "Чтобы отписаться, используй /free_off"
+        )
+    else:
+        await message.answer(
+            "Ты уже подписан на уведомления о бесплатных играх.\n\n"
+            "Чтобы отписаться, используй /free_off"
+        )
+
+
+@router.message(Command("free_off"))
+async def cmd_free_unsubscribe(message: Message):
+    """Отписка от уведомлений о бесплатных играх."""
+    unsubscribed = await free_game_unsubscribe(message.from_user.id)
+    if unsubscribed:
+        await message.answer(
+            "🔕 Отписался от уведомлений о бесплатных играх.\n\n"
+            "Чтобы снова подписаться, используй /free"
+        )
+    else:
+        await message.answer(
+            "Ты не был подписан на уведомления о бесплатных играх.\n\n"
+            "Чтобы подписаться, используй /free"
+        )
+

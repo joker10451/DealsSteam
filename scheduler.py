@@ -27,7 +27,9 @@ from hidden_gems import find_hidden_gems
 from publisher import (
     publish_single, notify_wishlist_users, notify_users, send_price_game,
     notify_admin, send_with_retry, get_daily_theme, esc, get_bot,
+    notify_free_game_subscribers,
 )
+from price_glitch import is_price_glitch
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 log = logging.getLogger(__name__)
@@ -121,24 +123,50 @@ async def check_and_post() -> Optional[str]:
         return None
 
     filtered = deduplicate(filtered)
-    free = [d for d in filtered if d.is_free]
-    paid = [d for d in filtered if not d.is_free]
-
+    
+    # Разделяем на категории: glitch'и, бесплатные, платные
+    glitches = []
+    free = []
+    paid = []
+    
+    for d in filtered:
+        if await is_price_glitch(d):
+            glitches.append(d)
+        elif d.is_free:
+            free.append(d)
+        else:
+            paid.append(d)
+    
+    # Сортируем glitch'и по скидке (самые экстремальные первыми)
+    glitches.sort(key=lambda d: d.discount, reverse=True)
+    
+    # Сортируем платные по теме дня и скидке
     _, _, theme_genres = get_daily_theme()
     paid.sort(key=lambda d: (theme_score(d, theme_genres), d.discount), reverse=True)
 
-    combined = free + paid
+    # Приоритет: glitch'и > бесплатные > платные
+    combined = glitches + free + paid
     if not combined:
         log.info("Нет новых скидок для публикации.")
         return None
 
     for deal in combined[:5]:  # пробуем до 5 кандидатов
-        published = await publish_single(deal, prefetched_rating=rating_cache.get(deal.deal_id))
+        is_priority = deal in glitches or deal.is_free
+        published = await publish_single(
+            deal,
+            prefetched_rating=rating_cache.get(deal.deal_id),
+            is_priority=is_priority
+        )
         if published:
             post_time = datetime.now(MSK).isoformat()
             await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount, deal.link)
             await notify_wishlist_users(deal)
             await notify_genre_subscribers(deal)
+            
+            # Уведомляем подписчиков о бесплатных играх
+            if deal.is_free:
+                await notify_free_game_subscribers(deal)
+            
             if not deal.is_free:
                 await send_price_game(deal)
             deleted = await cleanup_old_records()

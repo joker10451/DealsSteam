@@ -175,6 +175,19 @@ async def handle_screenshot_answer(callback: CallbackQuery):
     except Exception:
         # Если не получилось отредактировать, отправляем новое сообщение
         await callback.message.answer(response)
+    
+    # Show hint after first play
+    from onboarding import show_hint
+    from publisher import send_with_retry
+    hint_text = await show_hint(user_id, "minigame_challenge")
+    if hint_text:
+        await send_with_retry(lambda: callback.message.answer(hint_text))
+    
+    # Show hint on first achievement unlock
+    if new_achievements:
+        hint_text = await show_hint(user_id, "achievement_system")
+        if hint_text:
+            await send_with_retry(lambda: callback.message.answer(hint_text))
 
 
 @router.message(Command("profile"))
@@ -304,33 +317,36 @@ async def show_profile_callback(callback: CallbackQuery):
 
 @router.message(Command("shop"))
 async def cmd_shop(message: Message):
-    """Показать магазин призов с улучшенным оформлением."""
+    """Показать магазин призов с категориями."""
     from rewards import format_rewards_shop_improved, get_user_balance
     
     user_id = message.from_user.id
     balance = await get_user_balance(user_id)
     
-    text = format_rewards_shop_improved(user_id, balance)
+    text = format_rewards_shop_improved(user_id, balance, category="all")
     
-    # Создаём кнопки для быстрой покупки популярных призов
+    # Кнопки для выбора категории
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🎮 Ключ 5$", callback_data="buy:steam_key_5"),
-            InlineKeyboardButton(text="🎮 Ключ 10$", callback_data="buy:steam_key_10"),
+            InlineKeyboardButton(text="📅 Подписки", callback_data="shop_cat:subscriptions"),
+            InlineKeyboardButton(text="🎮 Ключи", callback_data="shop_cat:games"),
         ],
         [
-            InlineKeyboardButton(text="💜 Discord Nitro", callback_data="buy:discord_nitro"),
-            InlineKeyboardButton(text="🎵 Spotify", callback_data="buy:spotify_premium"),
-        ],
-        [
-            InlineKeyboardButton(text="💎 Вишлист", callback_data="buy:custom_wishlist"),
-            InlineKeyboardButton(text="👑 VIP", callback_data="buy:badge_vip"),
+            InlineKeyboardButton(text="🌟 Сервисы", callback_data="shop_cat:services"),
+            InlineKeyboardButton(text="⭐️ Значки", callback_data="shop_cat:badges"),
         ],
         [InlineKeyboardButton(text="📦 Мои призы", callback_data="show_my_rewards")],
         [InlineKeyboardButton(text="👤 Профиль", callback_data="show_profile")]
     ])
     
     await message.answer(text, reply_markup=keyboard)
+    
+    # Show hint on first shop open
+    from onboarding import show_hint
+    from publisher import send_with_retry
+    hint_text = await show_hint(user_id, "shop_earn")
+    if hint_text:
+        await send_with_retry(lambda: message.answer(hint_text))
 
 
 @router.message(Command("myrewards"))
@@ -441,6 +457,48 @@ async def show_shop_callback(callback: CallbackQuery):
     await cmd_shop(callback.message)
 
 
+@router.callback_query(lambda c: c.data.startswith("shop_cat:"))
+async def show_shop_category_callback(callback: CallbackQuery):
+    """Показать категорию магазина."""
+    from rewards import format_rewards_shop_improved, get_user_balance, REWARDS_CATALOG
+    
+    await callback.answer()
+    
+    category = callback.data.split(":", 1)[1]
+    user_id = callback.from_user.id
+    balance = await get_user_balance(user_id)
+    
+    text = format_rewards_shop_improved(user_id, balance, category=category)
+    
+    # Создаём кнопки для покупки призов в этой категории
+    buttons = []
+    for reward_id, reward in REWARDS_CATALOG.items():
+        if reward.get("category") != category:
+            continue
+        
+        # Проверяем, хватает ли баллов
+        cost = reward["cost"]
+        can_afford = balance >= cost
+        
+        # Эмодзи в зависимости от доступности
+        emoji = reward["emoji"] if can_afford else "🔒"
+        
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{emoji} {reward['name']} • {cost}💰",
+                callback_data=f"buy:{reward_id}"
+            )
+        ])
+    
+    # Добавляем кнопки навигации
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="show_shop")])
+    buttons.append([InlineKeyboardButton(text="📦 Мои призы", callback_data="show_my_rewards")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    await callback.message.edit_text(text, reply_markup=keyboard)
+
+
 @router.callback_query(lambda c: c.data == "show_my_rewards")
 async def show_my_rewards_callback(callback: CallbackQuery):
     """Показать призы через callback."""
@@ -450,47 +508,99 @@ async def show_my_rewards_callback(callback: CallbackQuery):
 
 @router.callback_query(lambda c: c.data and c.data.startswith("buy:"))
 async def buy_reward_callback(callback: CallbackQuery):
-    """Быстрая покупка приза через кнопку."""
-    from rewards import purchase_reward, get_user_balance, get_reward_price, can_purchase_exclusive, REWARDS_CATALOG, EXCLUSIVE_REWARDS
+    """Купить приз через callback с подтверждением."""
+    from rewards import REWARDS_CATALOG, get_user_balance
+    
+    await callback.answer()
     
     reward_id = callback.data.split(":", 1)[1]
     user_id = callback.from_user.id
     
     # Проверяем, существует ли приз
-    if reward_id not in REWARDS_CATALOG and reward_id not in EXCLUSIVE_REWARDS:
-        await callback.answer("❌ Приз не найден", show_alert=True)
+    if reward_id not in REWARDS_CATALOG:
+        await callback.message.answer("❌ Приз не найден")
         return
     
-    # Проверяем доступ к эксклюзивным призам
-    if reward_id in EXCLUSIVE_REWARDS:
-        access = await can_purchase_exclusive(user_id, reward_id)
-        if not access.get("can_purchase"):
-            await callback.answer(access.get("error", "Недоступно"), show_alert=True)
-            return
+    reward = REWARDS_CATALOG[reward_id]
+    balance = await get_user_balance(user_id)
     
-    # Получаем информацию о цене
-    price_info = await get_reward_price(reward_id, user_id)
-    reward = REWARDS_CATALOG.get(reward_id) or EXCLUSIVE_REWARDS.get(reward_id)
+    # Показываем подтверждение покупки
+    text = f"""
+🛒 <b>Подтверждение покупки</b>
+
+{reward['emoji']} <b>{reward['name']}</b>
+{esc(reward['description'])}
+
+💰 Стоимость: <b>{reward['cost']}</b> баллов
+💳 Твой баланс: <b>{balance}</b> баллов
+"""
     
-    # Покупаем
+    if balance < reward['cost']:
+        text += f"\n❌ Недостаточно баллов (не хватает {reward['cost'] - balance})"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="show_shop")]
+        ])
+    else:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Купить", callback_data=f"confirm_buy:{reward_id}"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="show_shop"),
+            ]
+        ])
+    
+    await callback.message.edit_text(text.strip(), reply_markup=keyboard)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("confirm_buy:"))
+async def confirm_buy_callback(callback: CallbackQuery):
+    """Подтвердить покупку приза."""
+    from rewards import purchase_reward, REWARDS_CATALOG
+    
+    await callback.answer()
+    
+    reward_id = callback.data.split(":", 1)[1]
+    user_id = callback.from_user.id
+    
     result = await purchase_reward(user_id, reward_id)
     
     if "error" in result:
-        await callback.answer(f"❌ {result['error']}", show_alert=True)
+        text = f"❌ {result['error']}"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад в магазин", callback_data="show_shop")]
+        ])
+        await callback.message.edit_text(text, reply_markup=keyboard)
         return
     
-    # Формируем сообщение об успешной покупке
-    success_text = f"✅ Куплено: {reward['name']}\n"
-    success_text += f"💰 Потрачено: {price_info['final_cost']} баллов\n"
-    success_text += f"💳 Остаток: {result['new_balance']} баллов"
+    reward = result["reward"]
+    text = f"""
+✅ <b>Приз куплен!</b>
+
+{reward['emoji']} {reward['name']}
+{esc(reward['description'])}
+
+💰 Списано: <b>{result['cost']}</b> баллов
+💳 Новый баланс: <b>{result['new_balance']}</b> баллов
+"""
     
-    if price_info.get("has_promotion"):
-        success_text += f"\n🔥 Скидка: -{price_info['discount']}%"
+    # Если это ключ, уведомляем админа
+    if "steam_key" in reward_id:
+        from publisher import notify_admin
+        username = callback.from_user.username or f"ID: {user_id}"
+        await notify_admin(
+            f"🎮 Новая покупка ключа!\n\n"
+            f"Пользователь: @{username}\n"
+            f"Приз: {reward['name']}\n"
+            f"Стоимость: {result['cost']} баллов\n\n"
+            f"Используй /givekey {user_id} [ключ] для выдачи"
+        )
+        text += "\n📬 Администратор скоро отправит тебе ключ в личные сообщения."
     
-    await callback.answer(success_text, show_alert=True)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Мои призы", callback_data="show_my_rewards")],
+        [InlineKeyboardButton(text="🏪 Магазин", callback_data="show_shop")]
+    ])
     
-    # Обновляем сообщение с магазином
-    await cmd_shop(callback.message)
+    await callback.message.edit_text(text.strip(), reply_markup=keyboard)
 
 
 @router.message(Command("invite"))

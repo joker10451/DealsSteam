@@ -509,70 +509,107 @@ async def reserve_reward(user_id: int, reward_id: str) -> dict:
         return result
 
 
-def format_rewards_shop_improved(user_id: int = None, balance: int = 0) -> str:
-    """Улучшенное форматирование магазина с категориями и акциями."""
+def format_rewards_shop_improved(user_id: int = None, balance: int = 0, category: str = "all") -> str:
+    """Улучшенное форматирование магазина с категориями."""
     from html import escape as esc
     
     lines = [
         "🏪 <b>МАГАЗИН ПРИЗОВ</b>",
-        f"💰 Твой баланс: <b>{balance}</b> баллов\n",
+        f"💰 Баланс: <b>{balance}</b> баллов\n",
     ]
     
-    # Группируем по категориям
-    categories = {
-        "subscriptions": {"name": "📅 Подписки", "items": []},
-        "games": {"name": "🎮 Игровые ключи", "items": []},
-        "services": {"name": "🌟 Подписки на сервисы", "items": []},
-        "badges": {"name": "⭐️ Значки и статусы", "items": []},
+    # Если показываем все категории - краткий обзор
+    if category == "all":
+        lines.append("📂 <b>Выбери категорию:</b>\n")
+        
+        # Подсчитываем количество призов в каждой категории
+        categories_count = {
+            "subscriptions": 0,
+            "games": 0,
+            "services": 0,
+            "badges": 0,
+        }
+        
+        for reward in REWARDS_CATALOG.values():
+            cat = reward.get("category", "other")
+            if cat in categories_count:
+                categories_count[cat] += 1
+        
+        lines.append(f"📅 <b>Подписки</b> — {categories_count['subscriptions']} шт.")
+        lines.append("   Приоритетные уведомления, расширенный вишлист\n")
+        
+        lines.append(f"🎮 <b>Игровые ключи</b> — {categories_count['games']} шт.")
+        lines.append("   Steam ключи на игры $5-20\n")
+        
+        lines.append(f"🌟 <b>Сервисы</b> — {categories_count['services']} шт.")
+        lines.append("   Discord Nitro, Spotify, Xbox Game Pass\n")
+        
+        lines.append(f"⭐️ <b>Значки</b> — {categories_count['badges']} шт.")
+        lines.append("   VIP статусы и эксклюзивные значки\n")
+        
+        lines.append("👇 Используй кнопки ниже для выбора категории")
+        
+        return "\n".join(lines)
+    
+    # Показываем конкретную категорию
+    category_names = {
+        "subscriptions": "📅 Подписки",
+        "games": "🎮 Игровые ключи",
+        "services": "🌟 Сервисы",
+        "badges": "⭐️ Значки и статусы",
     }
     
+    lines.append(f"<b>{category_names.get(category, 'Призы')}</b>\n")
+    
+    items = []
     for reward_id, reward in REWARDS_CATALOG.items():
-        category = reward.get("category", "other")
-        if category not in categories:
+        if reward.get("category") != category:
             continue
         
-        # Получаем цену с учётом акций
-        original_cost = reward["cost"]
-        final_cost = original_cost
-        discount_text = ""
+        # Получаем цену
+        cost = reward["cost"]
         
+        # Проверяем акции
+        discount_text = ""
         if reward_id in ACTIVE_PROMOTIONS:
             promo = ACTIVE_PROMOTIONS[reward_id]
             discount = promo.get("discount", 0)
-            final_cost = int(original_cost * (1 - discount / 100))
-            discount_text = f" 🔥 <s>{original_cost}</s> → <b>{final_cost}</b> (-{discount}%)"
-        else:
-            discount_text = f" <b>{final_cost}</b> баллов"
+            final_cost = int(cost * (1 - discount / 100))
+            discount_text = f" 🔥 <s>{cost}</s> → {final_cost}"
+            cost = final_cost
         
-        # Проверяем лимит
-        limited_text = ""
-        if "limited" in reward:
-            limited_text = f" ⚠️ Осталось: {reward['limited']}"
+        # Проверяем доступность
+        can_afford = balance >= cost
+        price_emoji = "💰" if can_afford else "🔒"
         
-        # Проверяем длительность
-        duration_text = ""
+        # Длительность
+        duration = ""
         if reward["type"] == "subscription":
             days = reward.get("duration_days", 0)
-            duration_text = f" ({days} дн.)"
+            duration = f" • {days}д"
         elif reward["type"] == "permanent":
-            duration_text = " (навсегда)"
+            duration = " • навсегда"
+        
+        # Лимит
+        limited = ""
+        if "limited" in reward:
+            limited = f" ⚠️ Лимит: {reward['limited']}"
         
         item = (
-            f"{reward['emoji']} <b>{reward['name']}</b>{duration_text}\n"
+            f"{reward['emoji']} <b>{reward['name']}</b>{duration}\n"
             f"   {esc(reward['description'])}\n"
-            f"   💰{discount_text}{limited_text}"
+            f"   {price_emoji} <b>{cost}</b> баллов{discount_text}{limited}\n"
         )
         
-        categories[category]["items"].append(item)
+        items.append((reward_id, item, can_afford))
     
-    # Выводим категории
-    for cat_data in categories.values():
-        if cat_data["items"]:
-            lines.append(f"\n{cat_data['name']}:")
-            lines.extend(cat_data["items"])
+    # Сортируем: сначала доступные, потом недоступные
+    items.sort(key=lambda x: (not x[2], REWARDS_CATALOG[x[0]]["cost"]))
     
-    lines.append("\n💡 <b>Как купить:</b>")
-    lines.append("Используй кнопки ниже или команду /buy")
+    for _, item, _ in items:
+        lines.append(item)
+    
+    lines.append("💡 Нажми на кнопку приза для покупки")
     
     return "\n".join(lines)
 

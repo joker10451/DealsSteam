@@ -57,6 +57,21 @@ async def init_db():
             )
         """)
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_history (
+                id SERIAL PRIMARY KEY,
+                deal_id TEXT NOT NULL,
+                price NUMERIC NOT NULL,
+                discount INTEGER DEFAULT 0,
+                recorded_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_price_history_deal_id ON price_history(deal_id)"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at)"
+        )
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS steam_users (
                 user_id BIGINT PRIMARY KEY,
                 steam_id TEXT NOT NULL,
@@ -111,6 +126,7 @@ async def init_db():
         )
         await init_metrics_table(conn)
         await init_genre_table(conn)
+        await init_onboarding_tables(conn)
     
     # Инициализация таблиц мини-игр
     from minigames import init_minigames_db
@@ -325,6 +341,291 @@ async def init_genre_table(conn):
     await conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_genre_sub_user ON genre_subscriptions(user_id)"
     )
+
+
+async def init_onboarding_tables(conn):
+    """Создать таблицы для системы онбординга."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS onboarding_progress (
+            user_id BIGINT PRIMARY KEY,
+            current_step INT DEFAULT 0,
+            status TEXT DEFAULT 'in_progress',
+            completed_at TIMESTAMPTZ,
+            skipped_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS onboarding_hints (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            hint_type TEXT NOT NULL,
+            shown_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(user_id, hint_type)
+        )
+    """)
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_onboarding_hints_user ON onboarding_hints(user_id)"
+    )
+
+
+# --- onboarding progress ---
+
+async def get_onboarding_progress(user_id: int) -> dict | None:
+    """
+    Получить прогресс онбординга пользователя.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        Dict with progress data if exists, None otherwise
+    """
+    try:
+        pool = await get_pool()
+        row = await pool.fetchrow(
+            "SELECT user_id, current_step, status, completed_at, skipped_at, created_at, updated_at "
+            "FROM onboarding_progress WHERE user_id = $1",
+            user_id,
+        )
+        return dict(row) if row else None
+    except Exception as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.error(f"Error fetching onboarding progress for user {user_id}: {e}")
+        return None
+
+
+async def create_onboarding_progress(user_id: int) -> bool:
+    """
+    Создать запись прогресса онбординга для пользователя.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        True on success, False if already exists or on error
+    """
+    try:
+        pool = await get_pool()
+        await pool.execute(
+            "INSERT INTO onboarding_progress (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
+            user_id,
+        )
+        return True
+    except Exception as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.error(f"Error creating onboarding progress for user {user_id}: {e}")
+        return False
+
+
+async def update_onboarding_step(user_id: int, step: int) -> bool:
+    """
+    Обновить текущий шаг онбординга пользователя.
+    
+    Args:
+        user_id: Telegram user ID
+        step: Current step number
+        
+    Returns:
+        True on success, False on error
+    """
+    try:
+        pool = await get_pool()
+        await pool.execute(
+            "UPDATE onboarding_progress SET current_step = $2, updated_at = NOW() WHERE user_id = $1",
+            user_id, step,
+        )
+        return True
+    except Exception as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.error(f"Error updating onboarding step for user {user_id} to step {step}: {e}")
+        return False
+
+
+async def complete_onboarding(user_id: int) -> bool:
+    """
+    Отметить онбординг как завершённый.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        True on success, False on error
+    """
+    try:
+        pool = await get_pool()
+        await pool.execute(
+            "UPDATE onboarding_progress SET status = 'completed', completed_at = NOW(), updated_at = NOW() "
+            "WHERE user_id = $1",
+            user_id,
+        )
+        return True
+    except Exception as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.error(f"Error completing onboarding for user {user_id}: {e}")
+        return False
+
+
+async def skip_onboarding(user_id: int) -> bool:
+    """
+    Отметить онбординг как пропущенный.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        True on success, False on error
+    """
+    try:
+        pool = await get_pool()
+        await pool.execute(
+            "UPDATE onboarding_progress SET status = 'skipped', skipped_at = NOW(), updated_at = NOW() "
+            "WHERE user_id = $1",
+            user_id,
+        )
+        return True
+    except Exception as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.error(f"Error skipping onboarding for user {user_id}: {e}")
+        return False
+
+
+async def save_hint_shown(user_id: int, hint_type: str) -> bool:
+    """
+    Сохранить показанную подсказку.
+    
+    Args:
+        user_id: Telegram user ID
+        hint_type: Type of hint shown (e.g., 'wishlist_vote', 'minigame_challenge')
+        
+    Returns:
+        True on success, False on error
+    """
+    try:
+        pool = await get_pool()
+        await pool.execute(
+            "INSERT INTO onboarding_hints (user_id, hint_type) "
+            "VALUES ($1, $2) "
+            "ON CONFLICT (user_id, hint_type) DO NOTHING",
+            user_id, hint_type,
+        )
+        return True
+    except Exception as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.error(f"Error saving hint for user {user_id}, hint_type {hint_type}: {e}")
+        return False
+
+
+async def get_shown_hints(user_id: int) -> list[str]:
+    """
+    Получить список показанных подсказок.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        List of hint types that have been shown to the user
+    """
+    try:
+        pool = await get_pool()
+        rows = await pool.fetch(
+            "SELECT hint_type FROM onboarding_hints WHERE user_id = $1",
+            user_id,
+        )
+        return [row["hint_type"] for row in rows]
+    except Exception as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.error(f"Error fetching shown hints for user {user_id}: {e}")
+        return []
+
+
+async def get_user_registration_date(user_id: int):
+    """
+    Получить дату регистрации пользователя.
+    
+    Args:
+        user_id: Telegram user ID
+        
+    Returns:
+        datetime object with registration date (created_at from onboarding_progress),
+        or None if user not found
+    """
+    try:
+        pool = await get_pool()
+        row = await pool.fetchrow(
+            "SELECT created_at FROM onboarding_progress WHERE user_id = $1",
+            user_id,
+        )
+        return row["created_at"] if row else None
+    except Exception as e:
+        import logging
+        log = logging.getLogger(__name__)
+        log.error(f"Error fetching registration date for user {user_id}: {e}")
+        return None
+
+
+# --- price history ---
+
+async def save_price_history(deal_id: str, price: float, discount: int):
+    """
+    Сохраняет историю цен для отслеживания аномалий.
+    
+    Args:
+        deal_id: ID сделки
+        price: Текущая цена
+        discount: Процент скидки
+    """
+    pool = await get_pool()
+    await pool.execute(
+        "INSERT INTO price_history (deal_id, price, discount) VALUES ($1, $2, $3)",
+        deal_id, price, discount,
+    )
+
+
+async def get_previous_price(deal_id: str) -> dict | None:
+    """
+    Получает предыдущую цену игры для обнаружения резких падений.
+    
+    Args:
+        deal_id: ID сделки
+        
+    Returns:
+        Dict с предыдущей ценой и скидкой или None
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT price, discount FROM price_history "
+        "WHERE deal_id = $1 "
+        "ORDER BY recorded_at DESC "
+        "LIMIT 1 OFFSET 1",  # Берём предпоследнюю запись
+        deal_id,
+    )
+    return dict(row) if row else None
+
+
+async def cleanup_price_history():
+    """
+    Удаляет историю цен старше 30 дней.
+    
+    Returns:
+        Количество удалённых записей
+    """
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM price_history WHERE recorded_at < NOW() - INTERVAL '30 days'"
+    )
+    try:
+        return int(result.split()[-1])
+    except Exception:
+        return 0
 
 
 async def genre_subscribe(user_id: int, genre: str) -> bool:
