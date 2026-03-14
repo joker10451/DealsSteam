@@ -6,6 +6,7 @@ CheapShark API — агрегатор скидок из 20+ магазинов (
 import asyncio
 import aiohttp
 from parsers.steam import Deal
+from parsers.utils import fetch_with_retry
 
 CHEAPSHARK_URL = (
     "https://www.cheapshark.com/api/1.0/deals"
@@ -18,22 +19,8 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 SKIP_STORE_IDS = {"1", "7"}  # 1=Steam, 7=GOG
 
 
-async def _fetch_with_retry(url: str, retries: int = 3, delay: float = 2.0):
-    for attempt in range(retries):
-        try:
-            async with aiohttp.ClientSession(headers=HEADERS) as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 200:
-                        return await resp.json(content_type=None)
-        except Exception:
-            pass
-        if attempt < retries - 1:
-            await asyncio.sleep(delay * (attempt + 1))
-    return None
-
-
 async def get_cheapshark_deals(min_discount: int = 50) -> list[Deal]:
-    data = await _fetch_with_retry(CHEAPSHARK_URL)
+    data = await fetch_with_retry(CHEAPSHARK_URL, headers=HEADERS)
     if not data:
         return []
 

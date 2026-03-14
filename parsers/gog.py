@@ -5,6 +5,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from currency import to_rubles, format_rub
 from parsers.steam import Deal
+from parsers.utils import fetch_with_retry
 
 GOG_API_URL = (
     "https://catalog.gog.com/v1/catalog"
@@ -40,23 +41,9 @@ def _normalize_price(price_str: str) -> str:
     return price_str
 
 
-async def _fetch_with_retry(url: str, retries: int = 3, delay: float = 2.0):
-    for attempt in range(retries):
-        try:
-            async with aiohttp.ClientSession(headers=HEADERS) as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 200:
-                        return await resp.json(content_type=None)
-        except Exception:
-            pass
-        if attempt < retries - 1:
-            await asyncio.sleep(delay * (attempt + 1))
-    return None
-
-
 async def get_gog_deals(min_discount: int = 50) -> list[Deal]:
     try:
-        data = await _fetch_with_retry(GOG_API_URL)
+        data = await fetch_with_retry(GOG_API_URL, headers=HEADERS)
     except Exception:
         return []
     if not data:

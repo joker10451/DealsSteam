@@ -3,6 +3,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 from dataclasses import dataclass, field
 from typing import Optional
+from parsers.utils import fetch_with_retry
 
 
 @dataclass
@@ -47,23 +48,9 @@ def _is_junk(title: str) -> bool:
     return any(kw in low for kw in SKIP_KEYWORDS)
 
 
-async def _fetch_with_retry(url: str, retries: int = 3, delay: float = 2.0) -> Optional[str]:
-    for attempt in range(retries):
-        try:
-            async with aiohttp.ClientSession(headers=HEADERS) as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 200:
-                        return await resp.text()
-        except Exception:
-            pass
-        if attempt < retries - 1:
-            await asyncio.sleep(delay * (attempt + 1))
-    return None
-
-
 async def get_steam_deals(min_discount: int = 50) -> list[Deal]:
     try:
-        html = await _fetch_with_retry(STEAM_SEARCH_URL)
+        html = await fetch_with_retry(STEAM_SEARCH_URL, headers=HEADERS, as_json=False)
     except Exception:
         return []
     if not html:

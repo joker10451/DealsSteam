@@ -1,6 +1,7 @@
 import asyncio
 import aiohttp
 from parsers.steam import Deal
+from parsers.utils import fetch_with_retry
 
 # country=RU гарантирует цены в рублях
 EPIC_FREE_URL = (
@@ -8,20 +9,6 @@ EPIC_FREE_URL = (
     "?locale=ru&country=RU&allowCountries=RU"
 )
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-
-
-async def _fetch_with_retry(url: str, retries: int = 3, delay: float = 2.0):
-    for attempt in range(retries):
-        try:
-            async with aiohttp.ClientSession(headers=HEADERS) as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 200:
-                        return await resp.json(content_type=None)
-        except Exception:
-            pass
-        if attempt < retries - 1:
-            await asyncio.sleep(delay * (attempt + 1))
-    return None
 
 
 def _fmt(kopecks: int) -> str:
@@ -32,7 +19,7 @@ def _fmt(kopecks: int) -> str:
 
 async def get_epic_deals(min_discount: int = 50) -> list[Deal]:
     try:
-        data = await _fetch_with_retry(EPIC_FREE_URL)
+        data = await fetch_with_retry(EPIC_FREE_URL, headers=HEADERS)
     except Exception:
         return []
     if not data:

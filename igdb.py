@@ -16,6 +16,10 @@ IGDB_URL = "https://api.igdb.com/v4/games"
 _token: Optional[str] = None
 _token_expires: float = 0
 
+# Кэш результатов запросов: {title_lower: (result, expires_at)}
+_game_cache: dict[str, tuple] = {}
+_GAME_CACHE_TTL = 24 * 3600  # 24 часа
+
 
 async def _get_token() -> Optional[str]:
     global _token, _token_expires
@@ -52,6 +56,11 @@ async def get_game_info(title: str) -> Optional[dict]:
     """
     if not IGDB_CLIENT_ID or not IGDB_CLIENT_SECRET:
         return None
+
+    cache_key = title.lower().strip()
+    cached = _game_cache.get(cache_key)
+    if cached and time.time() < cached[1]:
+        return cached[0]
 
     token = await _get_token()
     if not token:
@@ -113,10 +122,12 @@ async def get_game_info(title: str) -> Optional[dict]:
     # Жанры
     genres = [g["name"] for g in game.get("genres", [])[:3]]
 
-    return {
+    result = {
         "description": description,
         "rating": rating,
         "cover_url": cover_url,
         "screenshots": screenshots,
         "genres": genres,
     }
+    _game_cache[cache_key] = (result, time.time() + _GAME_CACHE_TTL)
+    return result
