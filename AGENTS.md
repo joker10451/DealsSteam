@@ -1,90 +1,182 @@
-# Agent Guidelines for Game Deals Bot Repository
+# Руководство для агентов — Game Deals Bot
 
-## Development Setup
+## Настройка окружения
 - Python 3.9+
-- Install dependencies: `pip install -r requirements.txt`
-- Copy `.env.example` to `.env` and configure required variables
+- Установка зависимостей: `pip install -r requirements.txt`
+- Скопируйте `.env.example` в `.env` и настройте переменные
 
-## Build Commands
-- No traditional build step (pure Python)
-- Database initialization: `python -c "from database import init_db; import asyncio; asyncio.run(init_db())"`
+## Команды для разработки
 
-## Linting Commands
+### Сборка
+- Традиционный шаг сборки отсутствует (чистый Python)
+- Инициализация БД: `python -c "from database import init_db; import asyncio; asyncio.run(init_db())"`
+
+### Линтинг
 - Flake8: `flake8 .`
-- Black formatter: `black .`
+- Black: `black .`
 - Isort: `isort .`
 - MyPy: `mypy .`
 
-## Testing Commands
-- All tests: `pytest`
-- Verbose: `pytest -v`
-- Specific test file: `pytest tests/test_database.py`
-- Single test function: `pytest tests/test_database.py::test_function_name`
-- With coverage: `pytest --cov=game_deals_bot`
-- Keyword match: `pytest -k "price_parser"`
+### Тестирование
+- Все тесты: `pytest`
+- Подробный вывод: `pytest -v`
+- Конкретный файл: `pytest tests/test_database.py`
+- Одна функция: `pytest tests/test_database.py::test_function_name`
+- С покрытием: `pytest --cov=.`
+- По ключевому слову: `pytest -k "price_parser"`
 
-## Code Style Guidelines
+## Стиль кода
 
-### Formatting
-- Follow PEP 8
-- Line length: 88 characters (black default)
-- 4 spaces per indentation level
-- 2 blank lines between top-level definitions
-- 1 blank line between method definitions
+### Форматирование
+- Следуйте PEP 8
+- Длина строки: 88 символов (по умолчанию в black)
+- 4 пробела на уровень отступа
+- 2 пустые строки между определениями верхнего уровня
+- 1 пустая строка между методами
 
-### Imports
-- Order: standard library, third-party, local
-- Blank line between groups
-- Absolute imports from project root
-- Specific imports preferred over wildcards
+### Импорты
+- Порядок: стандартная библиотека, third-party, локальные
+- Пустая строка между группами
+- Абсолютные импорты
+- Избегайте wildcards (`from module import *`)
 
 ### Type Hints
-- Use for all function parameters and returns
-- Use built-in collections (list, dict) in Python 3.9+
-- Optional[T] for nullable values
-- Union[A, B] for multiple types
+- Используйте для всех параметров и возвращаемых значений
+- Встроенные коллекции (list, dict) в Python 3.9+
+- Optional[T] для nullable значений
 
-### Naming Conventions
-- Variables/functions: `snake_case`
-- Classes: `PascalCase`
-- Constants: `UPPER_SNAKE_CASE`
-- Descriptive names (avoid single letters except loop counters)
-- Boolean positives: `is_valid`, `has_permission`
+### Именование
+- Переменные/функции: `snake_case`
+- Классы: `PascalCase`
+- Константы: `UPPER_SNAKE_CASE`
+- Булевы: `is_valid`, `has_permission`
 
-### Error Handling
-- Catch specific exceptions, not bare `except:`
-- Log with context using `logging.getLogger(__name__)`
-- Use appropriate levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
-- Re-raise when unable to handle meaningfully
+### Обработка ошибок
+- Ловите конкретные исключения, не `except:`
+- Логируйте с контекстом: `log = logging.getLogger(__name__)`
+- Используйте правильные уровни: DEBUG, INFO, WARNING, ERROR, CRITICAL
 
-### Documentation
-- Docstrings: triple double quotes, Google style
-- Comments: explain why, not what
-- Keep documentation synchronized with code
+### Документация
+- docstrings: тройные кавычки, Google style
+- Комментарии: объясняйте почему, а не что
 
-## Special Considerations
+## Особенности проекта
 
-### Async Code
-- Use `async`/`await` properly
-- Avoid blocking calls in async functions
-- Use `asyncio.gather()` for concurrency
-- Manage resources with `async with`
+### Асинхронный код
+- Правильно используйте `async`/`await`
+- Избегайте блокирующих вызовов
+- Используйте `asyncio.gather()` для параллельности
 
-### Database
-- Use connection pooling (asyncpg)
-- Parameterized queries to prevent SQL injection
-- Explicit transaction handling
-- Close connections properly
+### База данных
+- Пул соединений (asyncpg)
+- Параметризованные запросы
+- Явная обработка транзакций
 
-### External APIs
-- Implement rate limiting
-- Handle network errors gracefully
-- Cache responses when appropriate
-- Respect API terms of service
+### Внешние API
+- Rate limiting
+- Graceful обработка ошибок сети
+- Кеширование ответов
 
 ## Git Workflow
-- Main branch: `main` (stable)
-- Feature branches: `feature/short-description`
-- Commit messages: imperative mood, <50 char subject
-- Pull requests: focused, include tests, request review
-- Tags: semantic versioning vMAJOR.MINOR.PATCH
+- Основная ветка: `main`
+- Ветки: `feature/`, `bugfix/`
+- Сообщения коммитов: повелительное наклонение, <50 символов
+- Теги: vMAJOR.MINOR.PATCH
+
+## Render MCP Server
+
+Проект размещён на Render. Для управления через AI-инструменты настройте MCP.
+
+### Настройка Cursor
+
+1. Создайте API ключ на https://dashboard.render.com/settings#api-keys
+2. Добавьте в `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "render": {
+      "url": "https://mcp.render.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <ВАШ_API_KEY>"
+      }
+    }
+  }
+}
+```
+
+### Настройка Claude Code
+
+```bash
+claude mcp add --transport http render https://mcp.render.com/mcp --header "Authorization: Bearer <ВАШ_API_KEY>"
+```
+
+### Примеры команд
+
+После настройки можно использовать:
+- "Создать новую базу данных"
+- "Показать сервисы"
+- "Получить логи за ошибками"
+- "Почему мой сайт не работает?"
+- "Показать метрики за прошлый месяц"
+
+### Поддерживаемые действия
+
+- Сервисы: создание, список, детали, обновление переменных окружения
+- Базы данных: создание, список, запросы
+- Деплои: история, детали
+- Логи: фильтрация
+- Метрики: CPU, память, запросы
+
+Ограничения: нельзя удалять ресурсы, только создавать и обновлять переменные окружения.
+
+### Локальный запуск MCP
+
+Если нужно запустить локально вместо хостинга:
+
+1. Docker:
+```json
+{
+  "mcpServers": {
+    "render": {
+      "command": "docker",
+      "args": ["run", "--rm", "-e", "RENDER_API_KEY", "ghcr.io/render-oss/render-mcp-server"],
+      "env": { "RENDER_API_KEY": "your_key" }
+    }
+  }
+}
+```
+
+2. Или установить напрямую:
+```bash
+curl -fsSL https://raw.githubusercontent.com/render-oss/render-mcp-server/refs/heads/main/bin/install.sh | sh
+```
+
+## Развёртывание на Render
+
+Проект уже настроен для Render:
+- `bot.py` — точка входа
+- `requirements.txt` — зависимости
+- `Dockerfile` — контейнер
+- `.env` — переменные окружения (не коммитить)
+
+### Переменные окружения на Render
+
+Обязательные:
+- BOT_TOKEN — токен Telegram бота
+- CHANNEL_ID — ID канала для постов
+- ADMIN_ID — ID админа
+- DATABASE_URL — строка подключения к PostgreSQL
+
+Опциональные:
+- IGDB_CLIENT_ID, IGDB_CLIENT_SECRET
+- RAWG_API_KEY
+- STEAM_API_KEY
+- MIN_DISCOUNT_PERCENT (по умолчанию 50)
+- MIN_STEAM_RATING (по умолчанию 70)
+
+### Мониторинг
+
+- Логи смотрите в Dashboard Render -> Your Service -> Logs
+- Метрики: Dashboard Render -> Your Service -> Metrics
+- После деплоя бот запускается автоматически по расписанию из bot.py

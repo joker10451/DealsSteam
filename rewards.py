@@ -121,6 +121,7 @@ async def get_key_rewards_catalog() -> dict:
     return catalog
 
 
+async def init_rewards_table():
     """Создать таблицы для системы призов."""
     pool = await get_pool()
     async with pool.acquire() as conn:
