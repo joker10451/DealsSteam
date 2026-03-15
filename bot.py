@@ -54,6 +54,10 @@ async def main():
     from referral import init_referral_table
     await init_referral_table()
     
+    # Инициализация системы конкурсов
+    from giveaways import init_giveaways_db
+    await init_giveaways_db()
+    
     await init_session()
     set_bot(bot)
 
@@ -89,6 +93,8 @@ async def main():
         BotCommand(command="myrewards", description="Мои призы"),
         BotCommand(command="buy", description="Купить приз"),
         BotCommand(command="invite", description="Пригласить друга"),
+        BotCommand(command="giveaway", description="Активные конкурсы"),
+        BotCommand(command="mygiveaways", description="Мои конкурсы"),
     ]
     # Команды для админа (включают всё)
     admin_commands = user_commands + [
@@ -99,6 +105,8 @@ async def main():
         BotCommand(command="givekey", description="Выдать Steam ключ"),
         BotCommand(command="addpoints", description="Начислить баллы"),
         BotCommand(command="rewardstats", description="Статистика призов"),
+        BotCommand(command="creategiveaway", description="Создать конкурс"),
+        BotCommand(command="endgiveaway", description="Завершить конкурс"),
     ]
 
     await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
@@ -204,6 +212,16 @@ async def main():
         name="db_garbage_collect"
     )
     log.info("Очистка БД (GC): каждое воскресенье в 03:00 МСК")
+
+    # Giveaway System Jobs
+    from giveaways import check_ended_giveaways
+    scheduler.add_job(
+        check_ended_giveaways,
+        "interval",
+        minutes=15,
+        name="check_giveaways"
+    )
+    log.info("Проверка конкурсов: каждые 15 минут")
 
     if os.getenv("RENDER_EXTERNAL_URL"):
         scheduler.add_job(self_ping, "interval", minutes=10, name="self_ping")
