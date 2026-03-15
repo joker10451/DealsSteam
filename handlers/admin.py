@@ -340,14 +340,35 @@ async def cmd_test_post(message: Message):
 
     status_msg = await message.answer("🔄 Собираю скидки для теста...")
 
-    from scheduler import get_top_deals_now
+    from scheduler import get_steam_deals, get_gog_deals, get_epic_deals, MIN_DISCOUNT_PERCENT, FILTER_BUNDLES
     from publisher import get_bot
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     try:
-        deals = await get_top_deals_now(limit=1, user_id=message.from_user.id)
+        # Для теста не фильтруем уже опубликованные — берём просто топ скидок
+        all_deals = []
+        debug_lines = []
+        for fetcher in [get_steam_deals, get_gog_deals, get_epic_deals]:
+            name = fetcher.__name__
+            try:
+                fetched = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
+                all_deals.extend(fetched)
+                debug_lines.append(f"✅ {name}: {len(fetched)} шт.")
+            except Exception as e:
+                debug_lines.append(f"❌ {name}: {e}")
+
+        await status_msg.edit_text("🔄 Парсинг:\n" + "\n".join(debug_lines))
+
+        if FILTER_BUNDLES:
+            all_deals = [d for d in all_deals if "bundle" not in d.title.lower()]
+
+        all_deals.sort(key=lambda d: d.discount, reverse=True)
+        deals = all_deals[:1]
+
         if not deals:
-            await status_msg.edit_text("❌ Нет подходящих скидок прямо сейчас.")
+            await status_msg.edit_text(
+                "❌ Нет подходящих скидок прямо сейчас.\n\n" + "\n".join(debug_lines)
+            )
             return
 
         deal = deals[0]
