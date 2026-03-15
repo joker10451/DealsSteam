@@ -129,6 +129,7 @@ async def init_db():
         await init_onboarding_tables(conn)
         await init_notification_tables(conn)
         await init_price_game_answers_table(conn)
+        await init_engagement_table(conn)
     
     # Инициализация таблиц мини-игр
     from minigames import init_minigames_db
@@ -176,6 +177,20 @@ async def get_weekly_top(limit: int = 10) -> list[dict]:
         ORDER BY discount DESC
         LIMIT $1
     """, limit)
+    return [dict(r) for r in rows]
+
+
+async def search_posted_deals(query: str, limit: int = 20) -> list[dict]:
+    """Поиск по опубликованным сделкам (для inline-режима)."""
+    pool = await get_pool()
+    rows = await pool.fetch("""
+        SELECT title, store, discount, deal_id, link, posted_at
+        FROM posted_deals
+        WHERE title ILIKE $1
+          AND posted_at >= NOW() - INTERVAL '30 days'
+        ORDER BY discount DESC, posted_at DESC
+        LIMIT $2
+    """, f"%{query}%", limit)
     return [dict(r) for r in rows]
 
 
@@ -989,8 +1004,19 @@ async def init_notification_tables(conn):
             quiet_start INTEGER DEFAULT 23,
             quiet_end INTEGER DEFAULT 8,
             grouping_enabled BOOLEAN DEFAULT FALSE,
+            preferred_stores TEXT[] DEFAULT ARRAY['steam','gog','epic games'],
+            ignored_genres TEXT[] DEFAULT ARRAY[]::TEXT[],
             updated_at TIMESTAMPTZ DEFAULT NOW()
         )
+    """)
+    # Миграция для существующих БД
+    await conn.execute("""
+        ALTER TABLE user_notification_settings
+        ADD COLUMN IF NOT EXISTS preferred_stores TEXT[] DEFAULT ARRAY['steam','gog','epic games']
+    """)
+    await conn.execute("""
+        ALTER TABLE user_notification_settings
+        ADD COLUMN IF NOT EXISTS ignored_genres TEXT[] DEFAULT ARRAY[]::TEXT[]
     """)
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS notification_queue (
@@ -1016,34 +1042,51 @@ async def init_notification_tables(conn):
 async def notif_settings_get(user_id: int) -> dict:
     pool = await get_pool()
     row = await pool.fetchrow(
-        "SELECT min_discount, quiet_start, quiet_end, grouping_enabled "
+        "SELECT min_discount, quiet_start, quiet_end, grouping_enabled, "
+        "preferred_stores, ignored_genres "
         "FROM user_notification_settings WHERE user_id = $1",
         user_id,
     )
     if row:
-        return dict(row)
-    return {"min_discount": 0, "quiet_start": 23, "quiet_end": 8, "grouping_enabled": False}
+        d = dict(row)
+        # asyncpg возвращает массивы как list, но может быть None при старой схеме
+        if d["preferred_stores"] is None:
+            d["preferred_stores"] = ["steam", "gog", "epic games"]
+        if d["ignored_genres"] is None:
+            d["ignored_genres"] = []
+        return d
+    return {
+        "min_discount": 0,
+        "quiet_start": 23,
+        "quiet_end": 8,
+        "grouping_enabled": False,
+        "preferred_stores": ["steam", "gog", "epic games"],
+        "ignored_genres": [],
+    }
 
 
 async def notif_settings_set(user_id: int, **kwargs):
     pool = await get_pool()
-    # Upsert with only provided fields
     current = await notif_settings_get(user_id)
     current.update(kwargs)
     await pool.execute(
         """
         INSERT INTO user_notification_settings
-            (user_id, min_discount, quiet_start, quiet_end, grouping_enabled, updated_at)
-        VALUES ($1, $2, $3, $4, $5, NOW())
+            (user_id, min_discount, quiet_start, quiet_end, grouping_enabled,
+             preferred_stores, ignored_genres, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
         ON CONFLICT (user_id) DO UPDATE SET
             min_discount = $2, quiet_start = $3, quiet_end = $4,
-            grouping_enabled = $5, updated_at = NOW()
+            grouping_enabled = $5, preferred_stores = $6,
+            ignored_genres = $7, updated_at = NOW()
         """,
         user_id,
         current["min_discount"],
         current["quiet_start"],
         current["quiet_end"],
         current["grouping_enabled"],
+        current["preferred_stores"],
+        current["ignored_genres"],
     )
 
 
@@ -1204,3 +1247,229 @@ async def get_available_key_reward_ids() -> list[str]:
             SELECT DISTINCT reward_id FROM shop_keys WHERE is_available = TRUE
         """)
         return [r["reward_id"] for r in rows]
+
+
+# --- weekly garbage collection ---
+
+async def db_garbage_collect() -> dict[str, int]:
+    """
+    Еженедельная очистка базы данных.
+
+    Удаляет:
+    - price_history          > 90 дней
+    - posted_deals           > 365 дней  (мёртвые игры)
+    - votes                  > 365 дней
+    - metrics                > 90 дней
+    - user_score_history     > 90 дней
+    - screenshot_games       > 30 дней   (+ связанные ответы)
+    - screenshot_answers     > 30 дней
+    - daily_challenges       > 90 дней   (+ completions)
+    - daily_challenge_completions > 90 дней
+    - price_game             > 90 дней   (+ answers)
+    - price_game_answers     > 90 дней
+    - notification_queue     > 7 дней    (зависшие)
+    - onboarding_hints       > 180 дней
+
+    Возвращает словарь {таблица: кол-во удалённых строк}.
+    """
+    import logging as _logging
+    log = _logging.getLogger(__name__)
+
+    pool = await get_pool()
+    stats: dict[str, int] = {}
+
+    def _count(result: str) -> int:
+        try:
+            return int(result.split()[-1])
+        except Exception:
+            return 0
+
+    async with pool.acquire() as conn:
+        # price_history — 90 дней
+        r = await conn.execute(
+            "DELETE FROM price_history WHERE recorded_at < NOW() - INTERVAL '90 days'"
+        )
+        stats["price_history"] = _count(r)
+
+        # posted_deals — 365 дней (мёртвые игры)
+        r = await conn.execute(
+            "DELETE FROM posted_deals WHERE posted_at < NOW() - INTERVAL '365 days'"
+        )
+        stats["posted_deals_old"] = _count(r)
+
+        # votes — 365 дней
+        r = await conn.execute(
+            "DELETE FROM votes WHERE voted_at < NOW() - INTERVAL '365 days'"
+        )
+        stats["votes"] = _count(r)
+
+        # metrics — 90 дней
+        r = await conn.execute(
+            "DELETE FROM metrics WHERE date < CURRENT_DATE - INTERVAL '90 days'"
+        )
+        stats["metrics"] = _count(r)
+
+        # user_score_history — 90 дней
+        r = await conn.execute(
+            "DELETE FROM user_score_history WHERE recorded_at < NOW() - INTERVAL '90 days'"
+        )
+        stats["user_score_history"] = _count(r)
+
+        # screenshot_answers — 30 дней (сначала, т.к. нет FK cascade)
+        r = await conn.execute(
+            "DELETE FROM screenshot_answers WHERE answered_at < NOW() - INTERVAL '30 days'"
+        )
+        stats["screenshot_answers"] = _count(r)
+
+        # screenshot_games — 30 дней
+        r = await conn.execute(
+            "DELETE FROM screenshot_games WHERE created_at < NOW() - INTERVAL '30 days'"
+        )
+        stats["screenshot_games"] = _count(r)
+
+        # daily_challenge_completions — 90 дней
+        r = await conn.execute(
+            "DELETE FROM daily_challenge_completions "
+            "WHERE challenge_date < CURRENT_DATE - INTERVAL '90 days'"
+        )
+        stats["daily_challenge_completions"] = _count(r)
+
+        # daily_challenges — 90 дней
+        r = await conn.execute(
+            "DELETE FROM daily_challenges "
+            "WHERE challenge_date < CURRENT_DATE - INTERVAL '90 days'"
+        )
+        stats["daily_challenges"] = _count(r)
+
+        # price_game_answers — 90 дней
+        r = await conn.execute(
+            "DELETE FROM price_game_answers WHERE answered_at < NOW() - INTERVAL '90 days'"
+        )
+        stats["price_game_answers"] = _count(r)
+
+        # price_game — 90 дней
+        r = await conn.execute(
+            "DELETE FROM price_game WHERE posted_at < NOW() - INTERVAL '90 days'"
+        )
+        stats["price_game"] = _count(r)
+
+        # notification_queue — зависшие старше 7 дней
+        r = await conn.execute(
+            "DELETE FROM notification_queue WHERE queued_at < NOW() - INTERVAL '7 days'"
+        )
+        stats["notification_queue_stale"] = _count(r)
+
+        # onboarding_hints — 180 дней
+        r = await conn.execute(
+            "DELETE FROM onboarding_hints WHERE shown_at < NOW() - INTERVAL '180 days'"
+        )
+        stats["onboarding_hints"] = _count(r)
+
+    total = sum(stats.values())
+    log.info(
+        f"GC завершён: удалено {total} строк — "
+        + ", ".join(f"{k}={v}" for k, v in stats.items() if v > 0)
+    )
+    return stats
+
+
+# --- deal engagement analytics ---
+
+async def init_engagement_table(conn):
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS deal_engagement (
+            deal_id     TEXT PRIMARY KEY,
+            title       TEXT NOT NULL DEFAULT '',
+            store       TEXT NOT NULL DEFAULT '',
+            discount    INTEGER NOT NULL DEFAULT 0,
+            impressions INTEGER NOT NULL DEFAULT 0,
+            fire_votes  INTEGER NOT NULL DEFAULT 0,
+            poop_votes  INTEGER NOT NULL DEFAULT 0,
+            wl_adds     INTEGER NOT NULL DEFAULT 0,
+            store_clicks INTEGER NOT NULL DEFAULT 0,
+            first_seen  TIMESTAMPTZ DEFAULT NOW(),
+            last_event  TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_engagement_store ON deal_engagement(store)"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_engagement_last_event ON deal_engagement(last_event)"
+    )
+
+
+async def engagement_impression(deal_id: str, title: str, store: str, discount: int):
+    """Фиксирует публикацию поста (impression)."""
+    pool = await get_pool()
+    await pool.execute("""
+        INSERT INTO deal_engagement (deal_id, title, store, discount, impressions, last_event)
+        VALUES ($1, $2, $3, $4, 1, NOW())
+        ON CONFLICT (deal_id) DO UPDATE SET
+            impressions = deal_engagement.impressions + 1,
+            last_event  = NOW()
+    """, deal_id, title, store, discount)
+
+
+async def engagement_event(deal_id: str, event: str):
+    """
+    Инкрементирует счётчик события для сделки.
+    event: 'fire' | 'poop' | 'wl_add' | 'store_click'
+    """
+    col_map = {
+        "fire":        "fire_votes",
+        "poop":        "poop_votes",
+        "wl_add":      "wl_adds",
+        "store_click": "store_clicks",
+    }
+    col = col_map.get(event)
+    if not col:
+        return
+    pool = await get_pool()
+    # Только обновляем — запись должна уже существовать после impression
+    await pool.execute(f"""
+        UPDATE deal_engagement
+        SET {col} = {col} + 1, last_event = NOW()
+        WHERE deal_id = $1
+    """, deal_id)
+
+
+async def get_engagement_top(days: int = 7, limit: int = 10) -> list[dict]:
+    """Топ сделок по вовлечённости за последние N дней."""
+    pool = await get_pool()
+    rows = await pool.fetch("""
+        SELECT
+            deal_id, title, store, discount,
+            impressions, fire_votes, poop_votes, wl_adds, store_clicks,
+            -- engagement score: взвешенная сумма
+            (fire_votes * 3 + wl_adds * 5 + store_clicks * 2 - poop_votes) AS eng_score,
+            -- CTR вишлиста (%)
+            CASE WHEN impressions > 0
+                 THEN ROUND(wl_adds::numeric / impressions * 100, 1)
+                 ELSE 0 END AS wl_ctr
+        FROM deal_engagement
+        WHERE last_event >= NOW() - ($1 || ' days')::INTERVAL
+        ORDER BY eng_score DESC
+        LIMIT $2
+    """, str(days), limit)
+    return [dict(r) for r in rows]
+
+
+async def get_engagement_summary(days: int = 7) -> dict:
+    """Агрегированная статистика по всем сделкам за N дней."""
+    pool = await get_pool()
+    row = await pool.fetchrow("""
+        SELECT
+            COUNT(*)            AS total_deals,
+            SUM(impressions)    AS total_impressions,
+            SUM(fire_votes)     AS total_fire,
+            SUM(poop_votes)     AS total_poop,
+            SUM(wl_adds)        AS total_wl_adds,
+            SUM(store_clicks)   AS total_clicks,
+            CASE WHEN SUM(impressions) > 0
+                 THEN ROUND(SUM(wl_adds)::numeric / SUM(impressions) * 100, 1)
+                 ELSE 0 END     AS avg_wl_ctr
+        FROM deal_engagement
+        WHERE last_event >= NOW() - ($1 || ' days')::INTERVAL
+    """, str(days))
+    return dict(row) if row else {}

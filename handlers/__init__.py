@@ -1,4 +1,4 @@
-from . import wishlist, search, votes, admin, games, steam, onboarding, notifications
+from . import wishlist, search, votes, admin, games, steam, onboarding, notifications, inline
 
 
 def register_all(dp):
@@ -10,3 +10,4 @@ def register_all(dp):
     dp.include_router(games.router)
     dp.include_router(steam.router)
     dp.include_router(notifications.router)
+    dp.include_router(inline.router)      # Inline-режим (последним — не перехватывает команды)

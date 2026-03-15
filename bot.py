@@ -16,7 +16,8 @@ from parsers.utils import init_session, close_session
 from publisher import set_bot
 from scheduler import (
     check_and_post, post_weekly_digest, post_hidden_gems, run_parser_tests,
-    sync_all_steam_wishlists, sync_all_steam_libraries
+    sync_all_steam_wishlists, sync_all_steam_libraries,
+    check_bot_health, run_garbage_collect,
 )
 from publisher import flush_notification_queue
 from free_game_monitor import check_epic_free_games, check_gog_free_games
@@ -189,6 +190,20 @@ async def main():
         name="flush_notif_queue"
     )
     log.info("Flush очереди уведомлений: каждый час")
+
+    scheduler.add_job(
+        check_bot_health,
+        CronTrigger(minute=30, timezone=MSK),  # каждый час в :30 (не совпадает с flush)
+        name="bot_healthcheck"
+    )
+    log.info("Healthcheck бота: каждый час в :30")
+
+    scheduler.add_job(
+        run_garbage_collect,
+        CronTrigger(day_of_week="sun", hour=3, minute=0, timezone=MSK),
+        name="db_garbage_collect"
+    )
+    log.info("Очистка БД (GC): каждое воскресенье в 03:00 МСК")
 
     if os.getenv("RENDER_EXTERNAL_URL"):
         scheduler.add_job(self_ping, "interval", minutes=10, name="self_ping")

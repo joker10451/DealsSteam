@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from database import add_vote, get_votes, increment_metric
+from database import add_vote, get_votes, increment_metric, engagement_event
 
 router = Router()
 
@@ -17,6 +17,7 @@ async def handle_vote(callback: CallbackQuery):
 
     counts = await get_votes(deal_id)
     await increment_metric(f"vote_{vote_type}")
+    await engagement_event(deal_id, vote_type)
 
     # Восстанавливаем все кнопки из существующей клавиатуры, обновляя только счётчики
     try:

@@ -94,6 +94,7 @@ async def cmd_start(message: Message):
         "/free — подписаться на бесплатные игры\n"
         "/games — мини-игры\n"
         "/shop — магазин призов\n"
+        "/settings — настройки уведомлений\n"
         "/invite — пригласи друга и получи 100 баллов\n"
         "/profile — мой профиль\n\n"
         "<b>Дополнительно:</b>\n"
@@ -205,6 +206,19 @@ async def cb_wishlist_add_from_post(callback: CallbackQuery):
         await callback.answer("❌ Вишлист полон (макс. 20 игр)", show_alert=True)
     elif added:
         await callback.answer(f"✅ «{title}» добавлено в вишлист", show_alert=True)
+        # Трекинг аналитики — ищем deal_id по названию
+        from database import engagement_event, get_pool
+        try:
+            pool = await get_pool()
+            row = await pool.fetchrow(
+                "SELECT deal_id FROM deal_engagement WHERE title ILIKE $1 "
+                "ORDER BY last_event DESC LIMIT 1",
+                title,
+            )
+            if row:
+                await engagement_event(row["deal_id"], "wl_add")
+        except Exception:
+            pass
     else:
         await callback.answer("Уже есть в вишлисте", show_alert=True)
 

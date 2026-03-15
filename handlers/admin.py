@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from config import ADMIN_ID, POST_COOLDOWN_SEC
-from database import get_metrics_summary
+from database import get_metrics_summary, get_engagement_top, get_engagement_summary
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -90,22 +90,49 @@ async def cmd_stats(message: Message):
     if not _admin_only(message):
         await message.answer("⛔ Нет доступа.")
         return
+
     rows = await get_metrics_summary(days=7)
-    if not rows:
-        await message.answer("Метрик пока нет.")
-        return
+    summary = await get_engagement_summary(days=7)
+    top = await get_engagement_top(days=7, limit=5)
+
     labels = {
-        "published": "📢 Публикаций",
-        "publish_error": "❌ Ошибок публикации",
-        "wishlist_notify": "🔔 Уведомлений вишлиста",
-        "genre_notify": "🎯 Уведомлений по жанру",
-        "vote_fire": "🔥 Голосов огонь",
-        "vote_poop": "💩 Голосов мимо",
+        "published":              "📢 Публикаций",
+        "publish_error":          "❌ Ошибок публикации",
+        "wishlist_notify":        "🔔 Уведомлений вишлиста",
+        "wishlist_notify_flushed":"🔔 Отложенных уведомлений",
+        "genre_notify":           "🎯 Уведомлений по жанру",
+        "vote_fire":              "🔥 Голосов огонь",
+        "vote_poop":              "💩 Голосов мимо",
+        "free_game_notify":       "🎁 Уведомлений о бесплатных",
     }
-    lines = ["📊 <b>Метрики за 7 дней:</b>\n"]
+
+    lines = ["📊 <b>Метрики за 7 дней</b>\n"]
     for row in rows:
         label = labels.get(row["event"], row["event"])
         lines.append(f"{label}: <b>{row['total']}</b>")
+
+    # Сводка по вовлечённости
+    if summary and summary.get("total_impressions"):
+        lines.append("\n📈 <b>Вовлечённость постов</b>\n")
+        lines.append(f"👁 Показов: <b>{summary['total_impressions']}</b>")
+        lines.append(f"🔥 Огонь: <b>{summary['total_fire']}</b>  💩 Мимо: <b>{summary['total_poop']}</b>")
+        lines.append(f"➕ В вишлист: <b>{summary['total_wl_adds']}</b>  🛒 Кликов: <b>{summary['total_clicks']}</b>")
+        lines.append(f"📌 CTR вишлиста: <b>{summary['avg_wl_ctr']}%</b>")
+
+    # Топ-5 по вовлечённости
+    if top:
+        lines.append("\n🏆 <b>Топ-5 постов по вовлечённости</b>\n")
+        store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}
+        for i, r in enumerate(top, 1):
+            emoji = store_emoji.get(r["store"], "🕹")
+            ctr = r["wl_ctr"]
+            ctr_flag = " 🔴" if ctr == 0 and r["impressions"] >= 5 else (" 🟢" if ctr >= 5 else "")
+            lines.append(
+                f"{i}. {emoji} <b>{esc(r['title'][:35])}</b> −{r['discount']}%\n"
+                f"   👁{r['impressions']} 🔥{r['fire_votes']} 💩{r['poop_votes']} "
+                f"➕{r['wl_adds']} 🛒{r['store_clicks']}  CTR {ctr}%{ctr_flag}"
+            )
+
     await message.answer("\n".join(lines))
 
 

@@ -17,6 +17,7 @@ from database import (
     get_wishlist_matches, save_price_game,
     increment_metric, wishlist_remove_user,
     notif_settings_get, notif_queue_add,
+    engagement_impression, engagement_event,
 )
 from enricher import get_steam_rating, get_historical_low, generate_comment, genres_to_hashtags
 from igdb import get_game_info
@@ -47,6 +48,15 @@ def esc(text: str) -> str:
 def _cb_id(deal_id: str) -> str:
     """Обрезает deal_id до 50 символов для callback_data (лимит Telegram 64 байта)."""
     return deal_id[:50]
+
+
+def _utm_link(url: str, store: str) -> str:
+    """Добавляет UTM-параметры для отслеживания кликов из бота."""
+    if not url:
+        return url
+    sep = "&" if "?" in url else "?"
+    source = store.lower().replace(" ", "_")
+    return f"{url}{sep}utm_source=gamedealsbot&utm_medium=telegram&utm_campaign={source}"
 
 
 DAILY_THEMES = {
@@ -247,9 +257,15 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{_cb_id(deal.deal_id)}"),
         InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"),
     ]
+    # Кнопка "Поделиться" — открывает inline-поиск с названием игры в любом чате
+    share_button = InlineKeyboardButton(
+        text="🔗 Поделиться скидкой",
+        switch_inline_query=deal.title[:50],
+    )
     rows = [
-        [InlineKeyboardButton(text=f"🛒 Открыть в {deal.store}", url=deal.link)],
+        [InlineKeyboardButton(text=f"🛒 Открыть в {deal.store}", url=_utm_link(deal.link, deal.store))],
         vote_row,
+        [share_button],
     ]
     if price_game_button:
         rows.append([price_game_button])
@@ -271,8 +287,17 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         if not collage_bytes and igdb_info.get("cover_url"):
             photo = igdb_info["cover_url"]
 
+    # Fallback-цепочка: IGDB → deal.image_url (Steam CDN) → дефолтная картинка
     if not photo and not collage_bytes:
         photo = deal.image_url
+    if not photo and not collage_bytes:
+        # Steam CDN fallback по appid
+        if deal.deal_id.startswith("steam_"):
+            appid = deal.deal_id.replace("steam_", "")
+            photo = f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg"
+        else:
+            # Универсальный дефолт — нейтральная картинка-заглушка
+            photo = "https://store.steampowered.com/public/shared/images/header/globalheader_logo.png"
 
     try:
         if collage_bytes:
@@ -286,6 +311,7 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
 
         log.info(f"Опубликовано: {deal.title}")
         await increment_metric("published")
+        await engagement_impression(deal.deal_id, deal.title, deal.store, deal.discount)
         
         # Случайно публикуем игру со скриншотом (20% шанс)
         import random
@@ -371,10 +397,25 @@ async def notify_wishlist_users(deal):
     for uid in user_ids:
         settings = await notif_settings_get(uid)
 
+        # Фильтр по магазинам
+        deal_store_lower = deal.store.lower()
+        preferred = [s.lower() for s in settings["preferred_stores"]]
+        if preferred and deal_store_lower not in preferred:
+            log.info(f"Skipping notify user {uid}: store '{deal.store}' not in preferred {preferred}")
+            continue
+
         # Фильтр по минимальной скидке
         if not deal.is_free and deal.discount < settings["min_discount"]:
             log.info(f"Skipping notify user {uid}: discount {deal.discount}% < min {settings['min_discount']}%")
             continue
+
+        # Фильтр по жанрам (чёрный список)
+        ignored = [g.lower() for g in settings["ignored_genres"]]
+        if ignored and deal.genres:
+            deal_genres_lower = [g.lower() for g in deal.genres]
+            if any(g in ignored for g in deal_genres_lower):
+                log.info(f"Skipping notify user {uid}: genre match in ignored list")
+                continue
 
         # Тихие часы
         qs, qe = settings["quiet_start"], settings["quiet_end"]

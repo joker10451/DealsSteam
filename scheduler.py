@@ -321,6 +321,104 @@ async def run_parser_tests():
         log.error(f"Не удалось отправить отчёт админу: {e}")
 
 
+async def run_garbage_collect():
+    """
+    Еженедельная очистка БД. Запускается по воскресеньям в 03:00 МСК.
+    Отправляет краткий отчёт администратору.
+    """
+    from database import db_garbage_collect
+    try:
+        stats = await db_garbage_collect()
+        total = sum(stats.values())
+        if not ADMIN_ID:
+            return
+        if total == 0:
+            await notify_admin("🗑 <b>GC:</b> база чистая, нечего удалять.")
+            return
+        lines = ["🗑 <b>Еженедельная очистка БД завершена</b>\n"]
+        label_map = {
+            "price_history": "История цен (>90д)",
+            "posted_deals_old": "Старые сделки (>1г)",
+            "votes": "Голоса (>1г)",
+            "metrics": "Метрики (>90д)",
+            "user_score_history": "История баллов (>90д)",
+            "screenshot_answers": "Ответы скриншот-игры (>30д)",
+            "screenshot_games": "Скриншот-игры (>30д)",
+            "daily_challenge_completions": "Выполнения челленджей (>90д)",
+            "daily_challenges": "Челленджи (>90д)",
+            "price_game_answers": "Ответы угадай-цену (>90д)",
+            "price_game": "Игры угадай-цену (>90д)",
+            "notification_queue_stale": "Зависшие уведомления (>7д)",
+            "onboarding_hints": "Подсказки онбординга (>180д)",
+        }
+        for key, count in stats.items():
+            if count > 0:
+                label = label_map.get(key, key)
+                lines.append(f"• {label}: <b>{count}</b> строк")
+        lines.append(f"\n<b>Итого удалено: {total} строк</b>")
+        await notify_admin("\n".join(lines))
+    except Exception as e:
+        log.error(f"GC: ошибка при очистке БД: {e}")
+        await notify_admin(f"❌ <b>GC завершился с ошибкой:</b>\n{e}")
+
+
+async def check_bot_health():
+    """
+    Healthcheck: проверяет что последний пост был не позже MAX_SILENCE_HOURS назад.
+    Если бот «застрял» — шлёт алерт администратору.
+    Запускается каждый час.
+    """
+    import server as _server
+    from database import get_pool
+
+    MAX_SILENCE_HOURS = 3
+
+    last_post_iso = _server.last_post_time
+
+    # Если in-memory значение пустое (перезапуск) — берём из БД
+    if last_post_iso is None:
+        try:
+            pool = await get_pool()
+            row = await pool.fetchrow(
+                "SELECT posted_at FROM posted_deals ORDER BY posted_at DESC LIMIT 1"
+            )
+            if row:
+                last_post_iso = row["posted_at"].isoformat()
+                _server.last_post_time = last_post_iso
+        except Exception as e:
+            log.warning(f"Healthcheck: не удалось получить last_post из БД: {e}")
+
+    if last_post_iso is None:
+        log.info("Healthcheck: нет данных о последнем посте, пропускаем")
+        return
+
+    try:
+        from datetime import datetime as dt
+        now = datetime.now(MSK)
+        last_dt = dt.fromisoformat(last_post_iso)
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=MSK)
+        else:
+            last_dt = last_dt.astimezone(MSK)
+
+        silence_hours = (now - last_dt).total_seconds() / 3600
+
+        if silence_hours > MAX_SILENCE_HOURS:
+            last_str = last_dt.strftime("%d.%m.%Y %H:%M МСК")
+            await notify_admin(
+                f"🚨 <b>Бот застрял!</b>\n\n"
+                f"Последний пост: <b>{last_str}</b>\n"
+                f"Прошло: <b>{silence_hours:.1f} ч</b> (лимит {MAX_SILENCE_HOURS} ч)\n\n"
+                f"Проверь логи на Render или запусти /post вручную."
+            )
+            log.warning(f"Healthcheck FAIL: молчание {silence_hours:.1f}ч > {MAX_SILENCE_HOURS}ч")
+        else:
+            log.debug(f"Healthcheck OK: последний пост {silence_hours:.1f}ч назад")
+
+    except Exception as e:
+        log.error(f"Healthcheck: ошибка при проверке времени: {e}")
+
+
 async def notify_genre_subscribers(deal):
     """Уведомляет подписчиков на жанры из сделки."""
     if not deal.genres:
