@@ -33,11 +33,14 @@ async def cmd_post(message: Message):
     elapsed = time.time() - _last_manual_post
     if elapsed < POST_COOLDOWN_SEC:
         remaining = int(POST_COOLDOWN_SEC - elapsed)
-        await message.answer(f"⏳ Подожди ещё {remaining} сек. перед следующей публикацией.")
+        await message.answer(
+            f"⏳ Подожди ещё {remaining} сек. перед следующей публикацией."
+        )
         return
 
     from scheduler import check_and_post
     import server
+
     status_msg = await message.answer("🔄 Запускаю публикацию...")
     try:
         post_time = await check_and_post()
@@ -56,6 +59,7 @@ async def cmd_gems(message: Message):
         await message.answer("⛔ Нет доступа.")
         return
     from scheduler import post_hidden_gems
+
     status_msg = await message.answer("🔄 Ищу скрытые жемчужины...")
     try:
         await post_hidden_gems()
@@ -71,6 +75,7 @@ async def cmd_digest(message: Message):
         await message.answer("⛔ Нет доступа.")
         return
     from scheduler import post_weekly_digest
+
     status_msg = await message.answer("🔄 Формирую дайджест...")
     try:
         await post_weekly_digest()
@@ -110,7 +115,7 @@ async def cmd_give_key(message: Message):
     if not _admin_only(message):
         await message.answer("⛔ Нет доступа.")
         return
-    
+
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
         await message.answer(
@@ -118,18 +123,19 @@ async def cmd_give_key(message: Message):
             "Пример: /givekey 123456789 XXXXX-XXXXX-XXXXX"
         )
         return
-    
+
     try:
         user_id = int(args[1])
         key = args[2].strip()
     except ValueError:
         await message.answer("❌ Неверный формат user_id")
         return
-    
+
     # Отправляем ключ пользователю
     from publisher import get_bot
+
     bot = get_bot()
-    
+
     try:
         await bot.send_message(
             user_id,
@@ -139,14 +145,16 @@ async def cmd_give_key(message: Message):
             f"1. Открой Steam\n"
             f"2. Игры → Активировать продукт\n"
             f"3. Введи ключ\n\n"
-            f"Приятной игры! 🎉"
+            f"Приятной игры! 🎉",
         )
-        
+
         # Отмечаем приз как выданный
         from database import get_pool
+
         pool = await get_pool()
         async with pool.acquire() as conn:
-            await conn.execute("""
+            await conn.execute(
+                """
                 UPDATE user_rewards
                 SET is_claimed = TRUE
                 WHERE user_id = $1 
@@ -154,10 +162,12 @@ async def cmd_give_key(message: Message):
                 AND is_claimed = FALSE
                 ORDER BY purchased_at DESC
                 LIMIT 1
-            """, user_id)
-        
+            """,
+                user_id,
+            )
+
         await message.answer(f"✅ Ключ отправлен пользователю {user_id}")
-        
+
     except Exception as e:
         await message.answer(f"❌ Ошибка отправки: {esc(str(e))}")
 
@@ -168,7 +178,7 @@ async def cmd_add_points(message: Message):
     if not _admin_only(message):
         await message.answer("⛔ Нет доступа.")
         return
-    
+
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
         await message.answer(
@@ -176,24 +186,29 @@ async def cmd_add_points(message: Message):
             "Пример: /addpoints 123456789 500"
         )
         return
-    
+
     try:
         user_id = int(args[1])
         points = int(args[2])
     except ValueError:
         await message.answer("❌ Неверный формат")
         return
-    
+
     from database import get_pool
+
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute("""
+        await conn.execute(
+            """
             INSERT INTO user_scores (user_id, total_score)
             VALUES ($1, $2)
             ON CONFLICT (user_id) DO UPDATE
             SET total_score = user_scores.total_score + $2
-        """, user_id, points)
-    
+        """,
+            user_id,
+            points,
+        )
+
     await message.answer(f"✅ Начислено {points} баллов пользователю {user_id}")
 
 
@@ -227,7 +242,9 @@ async def cmd_add_key(message: Message):
 
     raw = parts[1]
     if "|" not in raw:
-        await message.answer("❌ Не хватает разделителя <code>|</code> между названием и ключом.")
+        await message.answer(
+            "❌ Не хватает разделителя <code>|</code> между названием и ключом."
+        )
         return
 
     meta_part, key_part = raw.split("|", 1)
@@ -259,6 +276,7 @@ async def cmd_add_key(message: Message):
             pass
 
     from database import add_shop_key
+
     try:
         key_id = await add_shop_key(
             reward_id=reward_id,
@@ -288,6 +306,7 @@ async def cmd_key_stats(message: Message):
         return
 
     from database import get_shop_key_stats
+
     try:
         stats = await get_shop_key_stats()
     except Exception as e:
@@ -335,8 +354,12 @@ async def cmd_test_post(message: Message):
 
         # Импортируем форматирование из publisher напрямую
         from publisher import (
-            esc, get_daily_theme, _localize_price, generate_comment,
-            genres_to_hashtags, make_collage,
+            esc,
+            get_daily_theme,
+            _localize_price,
+            generate_comment,
+            genres_to_hashtags,
+            make_collage,
         )
         from enricher import get_steam_rating, get_historical_low
         from igdb import get_game_info
@@ -347,7 +370,9 @@ async def cmd_test_post(message: Message):
 
         MSK = pytz.timezone("Europe/Moscow")
         now = datetime.now(MSK).strftime("%d.%m.%Y")
-        store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(deal.store, "🕹")
+        store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(
+            deal.store, "🕹"
+        )
 
         glitch_info = await check_for_glitch(deal)
         rating = historical_low = igdb_info = None
@@ -402,14 +427,26 @@ async def cmd_test_post(message: Message):
         lines.append(f"\n\n<i>🧪 Тестовый пост — в канал не отправлялся</i>")
         text = "\n".join(lines)
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"🛒 Открыть в {deal.store}", url=deal.link)],
-            [
-                InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{deal.deal_id[:40]}"),
-                InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{deal.deal_id[:40]}"),
-                InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"),
-            ],
-        ])
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"🛒 Открыть в {deal.store}", url=deal.link
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔥 0", callback_data=f"vote:fire:{deal.deal_id[:40]}"
+                    ),
+                    InlineKeyboardButton(
+                        text="💩 0", callback_data=f"vote:poop:{deal.deal_id[:40]}"
+                    ),
+                    InlineKeyboardButton(
+                        text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"
+                    ),
+                ],
+            ]
+        )
 
         bot = get_bot()
         photo = igdb_info.get("cover_url") if igdb_info else None
@@ -418,13 +455,17 @@ async def cmd_test_post(message: Message):
 
         if photo:
             await bot.send_photo(
-                message.from_user.id, photo=photo,
-                caption=text, reply_markup=keyboard,
+                message.from_user.id,
+                photo=photo,
+                caption=text,
+                reply_markup=keyboard,
             )
         else:
             await bot.send_message(
-                message.from_user.id, text,
-                reply_markup=keyboard, disable_web_page_preview=True,
+                message.from_user.id,
+                text,
+                reply_markup=keyboard,
+                disable_web_page_preview=True,
             )
 
         await status_msg.edit_text("✅ Тестовый пост отправлен тебе в личку.")
@@ -444,6 +485,7 @@ async def cmd_giveaways(message: Message):
     status_msg = await message.answer("🔄 Ищу активные раздачи...")
     try:
         from parsers.giveaways import get_all_active_giveaways, format_giveaways_message
+
         giveaways = await get_all_active_giveaways()
         text = format_giveaways_message(giveaways, limit=15)
         await status_msg.edit_text(text, disable_web_page_preview=True)
@@ -453,12 +495,14 @@ async def cmd_giveaways(message: Message):
 
 
 @router.message(Command("rewardstats"))
-async def cmd_reward_stats(message: Message):    """Статистика по купленным призам (только админ)."""
+async def cmd_reward_stats(message: Message):
+    """Статистика по купленным призам (только админ)."""
     if not _admin_only(message):
         await message.answer("⛔ Нет доступа.")
         return
-    
+
     from database import get_pool
+
     pool = await get_pool()
     async with pool.acquire() as conn:
         stats = await conn.fetch("""
@@ -470,21 +514,21 @@ async def cmd_reward_stats(message: Message):    """Статистика по к
             GROUP BY reward_id
             ORDER BY purchases DESC
         """)
-    
+
     if not stats:
         await message.answer("📊 Призы ещё не покупали")
         return
-    
+
     from rewards import REWARDS_CATALOG
-    
+
     lines = ["📊 <b>Статистика призов:</b>\n"]
     for row in stats:
         reward_id = row["reward_id"]
         reward = REWARDS_CATALOG.get(reward_id, {"name": reward_id})
         purchases = row["purchases"]
         claimed = row["claimed"]
-        
+
         lines.append(f"{reward['name']}")
         lines.append(f"Куплено: {purchases}, Выдано: {claimed}\n")
-    
+
     await message.answer("\n".join(lines))
