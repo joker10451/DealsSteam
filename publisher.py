@@ -141,8 +141,7 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     lines = []
     adult_prefix = "🔞 " if (igdb_info and igdb_info.get("is_adult")) else ""
     
-    # Заголовок с улучшенным форматированием
-    # Приоритет: ошибка цены > бесплатно > исторический минимум > огонь-скидка > тема дня
+    # Заголовок: тема дня всегда показывается, поверх неё — статус скидки
     if glitch_info and glitch_info.get('severity') == 'critical':
         lines.append(f"🚨 <b>{adult_prefix}ОШИБКА ЦЕНЫ? СРОЧНО! · {now}</b>")
     elif glitch_info and glitch_info.get('severity') == 'high':
@@ -150,9 +149,11 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     elif deal.is_free:
         lines.append(f"🎁 <b>{adult_prefix}БЕСПЛАТНО · {now}</b>")
     elif is_historic:
-        lines.append(f"⚡️ <b>{adult_prefix}ИСТОРИЧЕСКИЙ МИНИМУМ · {now}</b>")
+        lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
+        lines.append(f"⚡️ <i>Исторический минимум цены!</i>")
     elif deal.discount >= 80:
-        lines.append(f"🔥 <b>{adult_prefix}ОГОНЬ-СКИДКА · {now}</b>")
+        lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
+        lines.append(f"🔥 <i>Огонь-скидка −{deal.discount}%!</i>")
     else:
         lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
 
