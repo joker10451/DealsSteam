@@ -219,14 +219,40 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
 
     text = "\n".join(lines)
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    # Для платных игр — сохраняем цену и добавляем кнопку мини-игры
+    price_game_button = None
+    if not deal.is_free:
+        try:
+            old_price_str = str(deal.old_price).replace("₽", "").replace(" ", "").replace(",", "").strip()
+            correct = int(float(old_price_str))
+            if correct > 0:
+                await save_price_game(
+                    deal.deal_id, correct,
+                    title=deal.title,
+                    new_price=str(deal.new_price),
+                    link=deal.link,
+                    discount=deal.discount,
+                )
+                price_game_button = InlineKeyboardButton(
+                    text="🎲 Угадай цену — заработай баллы!",
+                    callback_data=f"pg_start:{_cb_id(deal.deal_id)}"
+                )
+        except (ValueError, AttributeError):
+            pass
+
+    vote_row = [
+        InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{_cb_id(deal.deal_id)}"),
+        InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{_cb_id(deal.deal_id)}"),
+        InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"),
+    ]
+    rows = [
         [InlineKeyboardButton(text=f"🛒 Открыть в {deal.store}", url=deal.link)],
-        [
-            InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{_cb_id(deal.deal_id)}"),
-            InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{_cb_id(deal.deal_id)}"),
-            InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"),
-        ],
-    ])
+        vote_row,
+    ]
+    if price_game_button:
+        rows.append([price_game_button])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
 
     photo = None
     collage_bytes = None
@@ -368,46 +394,6 @@ async def notify_wishlist_users(deal):
     if queued:
         log.info(f"Queued wishlist notification for {queued} users (quiet hours or grouping)")
 
-
-async def send_price_game(deal) -> None:
-    import random
-    try:
-        old_price_str = str(deal.old_price).replace("₽", "").replace(" ", "").replace(",", "").strip()
-        correct = int(float(old_price_str))
-    except (ValueError, AttributeError):
-        return
-
-    if correct <= 0:
-        return
-
-    variants: set[int] = {correct}
-    while len(variants) < 4:
-        delta = random.randint(10, 40)
-        sign = random.choice([-1, 1])
-        fake = round(correct * (1 + sign * delta / 100) / 10) * 10
-        if fake > 0 and fake != correct:
-            variants.add(fake)
-
-    options = sorted(list(variants))
-    random.shuffle(options)
-    await save_price_game(deal.deal_id, correct)
-
-    buttons = [
-        InlineKeyboardButton(text=f"{p}₽", callback_data=f"pg:{_cb_id(deal.deal_id)}:{p}")
-        for p in options
-    ]
-    rows = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
-    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
-
-    text = (
-        f"🎮 <b>Мини-игра: угадай цену!</b>\n\n"
-        f"Сколько стоила <b>{esc(deal.title)}</b> до скидки?\n"
-        f"Выбери правильный ответ 👇"
-    )
-    try:
-        await get_bot().send_message(CHANNEL_ID, text, reply_markup=keyboard)
-    except Exception as e:
-        log.warning(f"Мини-игра не отправлена: {e}")
 
 
 async def notify_admin(text: str):

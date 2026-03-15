@@ -25,7 +25,7 @@ from enricher import get_steam_rating
 from igdb import get_game_info
 from hidden_gems import find_hidden_gems
 from publisher import (
-    publish_single, notify_wishlist_users, notify_users, send_price_game,
+    publish_single, notify_wishlist_users, notify_users,
     notify_admin, send_with_retry, get_daily_theme, esc, get_bot,
     notify_free_game_subscribers,
 )
@@ -183,8 +183,7 @@ async def check_and_post() -> Optional[str]:
             if deal.is_free:
                 await notify_free_game_subscribers(deal)
             
-            if not deal.is_free:
-                await send_price_game(deal)
+            # Мини-игра теперь встроена в пост (кнопка pg_start:)
             deleted = await cleanup_old_records()
             if deleted:
                 log.info(f"БД: удалено {deleted} старых записей")

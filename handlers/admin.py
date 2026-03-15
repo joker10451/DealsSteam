@@ -494,42 +494,7 @@ async def cmd_test_post(message: Message):
                 disable_web_page_preview=True,
             )
 
-        await status_msg.edit_text("✅ Тестовый пост отправлен тебе в личку.")
-
-        # Мини-игра "угадай цену" — только для платных игр со скидкой
-        if not deal.is_free:
-            try:
-                old_price_str = str(deal.old_price).replace("₽", "").replace(" ", "").replace(",", "").strip()
-                correct = int(float(old_price_str))
-                if correct > 0:
-                    variants: set = {correct}
-                    while len(variants) < 4:
-                        delta = random.randint(10, 40)
-                        sign = random.choice([-1, 1])
-                        fake = round(correct * (1 + sign * delta / 100) / 10) * 10
-                        if fake > 0 and fake != correct:
-                            variants.add(fake)
-                    options = list(variants)
-                    random.shuffle(options)
-
-                    from database import save_price_game
-                    await save_price_game(deal.deal_id, correct)
-
-                    pg_buttons = [
-                        InlineKeyboardButton(text=f"{p}₽", callback_data=f"pg:{deal.deal_id[:40]}:{p}")
-                        for p in options
-                    ]
-                    rows = [pg_buttons[i:i+2] for i in range(0, len(pg_buttons), 2)]
-                    pg_keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
-                    pg_text = (
-                        f"🎮 <b>Мини-игра: угадай цену!</b>\n\n"
-                        f"Сколько стоила <b>{esc(deal.title)}</b> до скидки?\n"
-                        f"Выбери правильный ответ 👇\n\n"
-                        f"<i>🧪 Тест — баллы начислятся как обычно</i>"
-                    )
-                    await bot.send_message(message.from_user.id, pg_text, reply_markup=pg_keyboard)
-            except Exception as e:
-                log.warning(f"Тест: мини-игра не отправлена: {e}")
+        await status_msg.edit_text("✅ Тестовый пост отправлен тебе в личку.\n\n<i>💡 В реальном посте под ним будет кнопка «🎲 Угадай цену»</i>")
 
     except Exception as e:
         log.error(f"Ошибка тестового поста: {e}")

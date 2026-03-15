@@ -208,6 +208,155 @@ async def handle_screenshot_answer(callback: CallbackQuery):
             await send_with_retry(lambda: callback.message.answer(hint_text))
 
 
+@router.callback_query(lambda c: c.data and c.data.startswith("pg_start:"))
+async def handle_price_game_start(callback: CallbackQuery):
+    """Пользователь нажал кнопку 'Угадай цену' под постом — отправляем игру в личку."""
+    import random
+    from database import get_price_game, record_price_game_answer
+    from publisher import get_bot, send_with_retry
+
+    deal_id = callback.data.split(":", 1)[1]
+    data = await get_price_game(deal_id)
+
+    if not data or data["original_price"] <= 0:
+        await callback.answer("Игра уже недоступна 😔", show_alert=True)
+        return
+
+    correct = data["original_price"]
+    title = data.get("title") or "игра"
+    new_price = data.get("new_price") or "?"
+    discount = data.get("discount") or 0
+    link = data.get("link") or ""
+
+    # Умная генерация вариантов — правдоподобные значения рядом с правильным
+    # Для аномальных скидок (>= 90%) варианты строим от original_price, не от new_price
+    variants: set = {correct}
+    attempts = 0
+    while len(variants) < 4 and attempts < 50:
+        attempts += 1
+        # Диапазон ±15–50% от правильного ответа, округляем до красивых чисел
+        pct = random.randint(15, 50)
+        sign = random.choice([-1, 1])
+        raw = correct * (1 + sign * pct / 100)
+        # Округляем до ближайшего "красивого" числа (99, 149, 199, 299...)
+        if raw < 100:
+            fake = round(raw / 10) * 10
+        elif raw < 1000:
+            fake = round(raw / 50) * 50
+        else:
+            fake = round(raw / 100) * 100
+        if fake > 0 and fake != correct:
+            variants.add(fake)
+
+    options = list(variants)
+    random.shuffle(options)
+
+    buttons = [
+        InlineKeyboardButton(text=f"{p}₽", callback_data=f"pg:{deal_id}:{p}")
+        for p in options
+    ]
+    rows = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    # Красивый текст с контекстом игры
+    glitch_note = ""
+    if discount >= 90:
+        glitch_note = "\n⚡️ <i>Аномальная скидка — это редкость!</i>"
+
+    text = (
+        f"🎲 <b>Угадай цену!</b>\n\n"
+        f"🎮 <b>{esc(title)}</b>\n"
+        f"🏷 Скидка: <b>−{discount}%</b>  →  сейчас <b>{esc(new_price)}</b>{glitch_note}\n\n"
+        f"Сколько стоила игра <b>до скидки</b>? 👇"
+    )
+
+    try:
+        await send_with_retry(lambda: get_bot().send_message(
+            callback.from_user.id, text, reply_markup=keyboard
+        ))
+        await callback.answer("Игра отправлена в личку! 🎮")
+    except Exception:
+        await callback.answer(
+            "Сначала напиши боту в личку — нажми /start",
+            show_alert=True
+        )
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("pg:"))
+async def handle_price_game_answer(callback: CallbackQuery):
+    """Обработать ответ на мини-игру 'угадай цену'."""
+    import logging
+    from database import get_price_game, record_price_game_answer
+    from minigames import add_score, get_user_score
+    from achievements import check_and_unlock_achievements
+
+    log = logging.getLogger(__name__)
+    parts = callback.data.split(":", 2)
+    if len(parts) != 3:
+        await callback.answer("Ошибка данных")
+        return
+
+    deal_id = parts[1]
+    try:
+        chosen = int(parts[2])
+    except ValueError:
+        await callback.answer("Ошибка данных")
+        return
+
+    data = await get_price_game(deal_id)
+    if not data:
+        await callback.answer("Игра уже недоступна 😔", show_alert=True)
+        return
+
+    correct = data["original_price"]
+    link = data.get("link") or ""
+
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.first_name
+
+    # Защита от повторных ответов
+    accepted = await record_price_game_answer(user_id, deal_id)
+    if not accepted:
+        await callback.answer("Ты уже отвечал на этот вопрос 😉", show_alert=True)
+        return
+
+    if chosen == correct:
+        points = 20
+        await add_score(user_id, points, correct=True, reason="price_game", username=username)
+        new_achievements = await check_and_unlock_achievements(user_id, username)
+        score_data = await get_user_score(user_id)
+        balance = score_data.get("total_score", 0)
+
+        response = (
+            f"✅ <b>Верно!</b> Цена была <b>{correct}₽</b>\n"
+            f"💰 +{points} баллов  ·  Баланс: <b>{balance}</b> 🏆"
+        )
+        if link:
+            response += f"\n\n🛒 <a href=\"{link}\">Купить, пока скидка!</a>"
+        if new_achievements:
+            response += "\n\n🏆 <b>Новые достижения:</b>"
+            for ach in new_achievements:
+                response += f"\n{esc(ach['name'])} +{ach['reward']} баллов!"
+        await callback.answer("Верно! 🎉", show_alert=False)
+    else:
+        await add_score(user_id, 0, correct=False, reason="price_game", username=username)
+        response = (
+            f"❌ <b>Неверно.</b> Правильный ответ: <b>{correct}₽</b>"
+        )
+        if link:
+            response += f"\n\n🛒 <a href=\"{link}\">Всё равно посмотреть сделку</a>"
+        await callback.answer("Неверно 😔", show_alert=False)
+
+    try:
+        await callback.message.edit_text(
+            f"{callback.message.text}\n\n{response}",
+            reply_markup=None
+        )
+    except Exception as e:
+        log.warning(f"pg answer edit failed: {e}")
+        await callback.message.answer(response)
+
+
 @router.message(Command("profile"))
 async def cmd_profile(message: Message):
     """Показать профиль пользователя."""

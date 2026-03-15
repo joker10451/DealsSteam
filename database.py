@@ -277,20 +277,28 @@ async def get_top_voted(limit: int = 5) -> list[dict]:
 
 # --- price_game ---
 
-async def save_price_game(deal_id: str, original_price: int):
+async def save_price_game(deal_id: str, original_price: int, title: str = "", new_price: str = "", link: str = "", discount: int = 0):
     pool = await get_pool()
-    await pool.execute(
-        "INSERT INTO price_game (deal_id, original_price) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        deal_id, original_price,
-    )
+    # Миграция: добавляем колонки если их нет
+    async with pool.acquire() as conn:
+        for col, coltype in [("title", "TEXT DEFAULT ''"), ("new_price", "TEXT DEFAULT ''"), ("link", "TEXT DEFAULT ''"), ("discount", "INTEGER DEFAULT 0")]:
+            await conn.execute(f"ALTER TABLE price_game ADD COLUMN IF NOT EXISTS {col} {coltype}")
+        await conn.execute(
+            """INSERT INTO price_game (deal_id, original_price, title, new_price, link, discount)
+               VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (deal_id) DO UPDATE
+               SET original_price=$2, title=$3, new_price=$4, link=$5, discount=$6""",
+            deal_id, original_price, title, new_price, link, discount,
+        )
 
 
-async def get_price_game(deal_id: str) -> int | None:
+async def get_price_game(deal_id: str) -> dict | None:
     pool = await get_pool()
     row = await pool.fetchrow(
-        "SELECT original_price FROM price_game WHERE deal_id = $1", deal_id
+        "SELECT original_price, title, new_price, link, discount FROM price_game WHERE deal_id = $1", deal_id
     )
-    return row["original_price"] if row else None
+    if not row:
+        return None
+    return dict(row)
 
 
 # --- metrics ---
