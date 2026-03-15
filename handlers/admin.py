@@ -340,12 +340,12 @@ async def cmd_test_post(message: Message):
 
     status_msg = await message.answer("🔄 Собираю скидки для теста...")
 
-    from scheduler import get_steam_deals, get_gog_deals, get_epic_deals, MIN_DISCOUNT_PERCENT, FILTER_BUNDLES
+    from scheduler import get_steam_deals, get_gog_deals, get_epic_deals, MIN_DISCOUNT_PERCENT, FILTER_BUNDLES, is_already_posted
     from publisher import get_bot
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    import random
 
     try:
-        # Для теста не фильтруем уже опубликованные — берём просто топ скидок
         all_deals = []
         debug_lines = []
         for fetcher in [get_steam_deals, get_gog_deals, get_epic_deals]:
@@ -362,16 +362,21 @@ async def cmd_test_post(message: Message):
         if FILTER_BUNDLES:
             all_deals = [d for d in all_deals if "bundle" not in d.title.lower()]
 
-        all_deals.sort(key=lambda d: d.discount, reverse=True)
-        deals = all_deals[:1]
+        # Фильтруем уже опубликованные
+        fresh = []
+        for d in all_deals:
+            if not await is_already_posted(d.deal_id):
+                fresh.append(d)
 
-        if not deals:
+        # Если все уже опубликованы — берём из всех
+        pool = fresh if fresh else all_deals
+        if not pool:
             await status_msg.edit_text(
                 "❌ Нет подходящих скидок прямо сейчас.\n\n" + "\n".join(debug_lines)
             )
             return
 
-        deal = deals[0]
+        deal = random.choice(pool)
 
         # Импортируем форматирование из publisher напрямую
         from publisher import (
@@ -490,6 +495,41 @@ async def cmd_test_post(message: Message):
             )
 
         await status_msg.edit_text("✅ Тестовый пост отправлен тебе в личку.")
+
+        # Мини-игра "угадай цену" — только для платных игр со скидкой
+        if not deal.is_free:
+            try:
+                old_price_str = str(deal.old_price).replace("₽", "").replace(" ", "").replace(",", "").strip()
+                correct = int(float(old_price_str))
+                if correct > 0:
+                    variants: set = {correct}
+                    while len(variants) < 4:
+                        delta = random.randint(10, 40)
+                        sign = random.choice([-1, 1])
+                        fake = round(correct * (1 + sign * delta / 100) / 10) * 10
+                        if fake > 0 and fake != correct:
+                            variants.add(fake)
+                    options = list(variants)
+                    random.shuffle(options)
+
+                    from database import save_price_game
+                    await save_price_game(deal.deal_id, correct)
+
+                    pg_buttons = [
+                        InlineKeyboardButton(text=f"{p}₽", callback_data=f"pg:{deal.deal_id[:40]}:{p}")
+                        for p in options
+                    ]
+                    rows = [pg_buttons[i:i+2] for i in range(0, len(pg_buttons), 2)]
+                    pg_keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+                    pg_text = (
+                        f"🎮 <b>Мини-игра: угадай цену!</b>\n\n"
+                        f"Сколько стоила <b>{esc(deal.title)}</b> до скидки?\n"
+                        f"Выбери правильный ответ 👇\n\n"
+                        f"<i>🧪 Тест — баллы начислятся как обычно</i>"
+                    )
+                    await bot.send_message(message.from_user.id, pg_text, reply_markup=pg_keyboard)
+            except Exception as e:
+                log.warning(f"Тест: мини-игра не отправлена: {e}")
 
     except Exception as e:
         log.error(f"Ошибка тестового поста: {e}")
