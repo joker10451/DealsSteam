@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from database import add_vote, get_votes, get_price_game, increment_metric, record_price_game_answer
+from database import add_vote, get_votes, increment_metric
 
 router = Router()
 
@@ -18,88 +18,30 @@ async def handle_vote(callback: CallbackQuery):
     counts = await get_votes(deal_id)
     await increment_metric(f"vote_{vote_type}")
 
-    # Сохраняем кнопку ссылки на магазин при обновлении счётчиков
-    store_url = None
-    store_name = None
+    # Восстанавливаем все кнопки из существующей клавиатуры, обновляя только счётчики
     try:
         existing = callback.message.reply_markup
         if existing:
+            new_rows = []
             for row in existing.inline_keyboard:
+                new_row = []
                 for btn in row:
-                    if getattr(btn, "url", None):
-                        store_url = btn.url
-                        store_name = btn.text.replace("🛒 Открыть в ", "")
-                        break
-    except Exception:
-        pass
-
-    rows = []
-    if store_url and store_name:
-        rows.append([InlineKeyboardButton(text=f"🛒 Открыть в {store_name}", url=store_url)])
-    rows.append([
-        InlineKeyboardButton(text=f"🔥 {counts['fire']}", callback_data=f"vote:fire:{deal_id}"),
-        InlineKeyboardButton(text=f"💩 {counts['poop']}", callback_data=f"vote:poop:{deal_id}"),
-    ])
-
-    try:
-        await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+                    cb = getattr(btn, "callback_data", None)
+                    if cb and cb.startswith("vote:fire:"):
+                        new_row.append(InlineKeyboardButton(
+                            text=f"🔥 {counts['fire']}", callback_data=cb
+                        ))
+                    elif cb and cb.startswith("vote:poop:"):
+                        new_row.append(InlineKeyboardButton(
+                            text=f"💩 {counts['poop']}", callback_data=cb
+                        ))
+                    else:
+                        new_row.append(btn)
+                new_rows.append(new_row)
+            await callback.message.edit_reply_markup(
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=new_rows)
+            )
     except Exception:
         pass
 
     await callback.answer("🔥 Огонь!" if vote_type == "fire" else "💩 Мимо", show_alert=False)
-
-
-@router.callback_query(F.data.startswith("pg:"))
-async def handle_price_game(callback: CallbackQuery):
-    parts = callback.data.split(":")
-    if len(parts) < 3:
-        await callback.answer("Ошибка данных", show_alert=True)
-        return
-
-    deal_id = parts[1]
-    try:
-        chosen = int(parts[2])
-    except ValueError:
-        await callback.answer("Ошибка: неверная цена", show_alert=True)
-        return
-
-    if chosen <= 0 or chosen > 100_000:
-        await callback.answer("Ошибка: цена вне допустимого диапазона", show_alert=True)
-        return
-
-    correct = await get_price_game(deal_id)
-    if correct is None:
-        await callback.answer("Игра уже закончилась!", show_alert=False)
-        return
-
-    # Атомарная защита от повторного ответа
-    accepted = await record_price_game_answer(callback.from_user.id, deal_id)
-    if not accepted:
-        await callback.answer("Ты уже отвечал на этот вопрос!", show_alert=True)
-        return
-
-    is_correct = (chosen == correct)
-    
-    # Начисляем баллы за игру
-    from minigames import add_score
-    user_id = callback.from_user.id
-    points = 5 if is_correct else 0
-    username = callback.from_user.username or callback.from_user.first_name
-    new_achievements = await add_score(user_id, points, is_correct, reason="price_game", username=username)
-    
-    # Формируем ответ
-    if is_correct:
-        answer_text = f"✅ Правильно! Цена была {correct}₽\n+{points} баллов"
-    else:
-        answer_text = f"❌ Неверно. Правильный ответ: {correct}₽"
-    
-    # Если есть новые достижения, добавляем их
-    if new_achievements:
-        answer_text += f"\n\n🏆 Новое достижение!\n{new_achievements[0]['name']}"
-    
-    await callback.answer(answer_text, show_alert=True)
-
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass

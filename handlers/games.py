@@ -1,22 +1,28 @@
 """
 Обработчики для мини-игр и челленджей.
 """
+import logging
+import random
 from html import escape
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
+from achievements import check_and_unlock_achievements
+from database import get_price_game, record_price_game_answer
 from minigames import (
     get_user_score, get_leaderboard, check_screenshot_answer,
-    get_daily_challenge, complete_daily_challenge
+    get_daily_challenge, complete_daily_challenge, add_score,
 )
+from publisher import get_bot, send_with_retry
 
 router = Router()
+log = logging.getLogger(__name__)
 
 
 def esc(text: str) -> str:
     return escape(str(text))
-
 
 @router.message(Command("score"))
 async def cmd_score(message: Message):
@@ -196,7 +202,6 @@ async def handle_screenshot_answer(callback: CallbackQuery):
     
     # Show hint after first play
     from onboarding import show_hint
-    from publisher import send_with_retry
     hint_text = await show_hint(user_id, "minigame_challenge")
     if hint_text:
         await send_with_retry(lambda: callback.message.answer(hint_text))
@@ -211,10 +216,6 @@ async def handle_screenshot_answer(callback: CallbackQuery):
 @router.callback_query(lambda c: c.data and c.data.startswith("pg_start:"))
 async def handle_price_game_start(callback: CallbackQuery):
     """Пользователь нажал кнопку 'Угадай цену' под постом — отправляем игру в личку."""
-    import random
-    from database import get_price_game, record_price_game_answer
-    from publisher import get_bot, send_with_retry
-
     deal_id = callback.data.split(":", 1)[1]
     data = await get_price_game(deal_id)
 
@@ -285,12 +286,6 @@ async def handle_price_game_start(callback: CallbackQuery):
 @router.callback_query(lambda c: c.data and c.data.startswith("pg:"))
 async def handle_price_game_answer(callback: CallbackQuery):
     """Обработать ответ на мини-игру 'угадай цену'."""
-    import logging
-    from database import get_price_game, record_price_game_answer
-    from minigames import add_score, get_user_score
-    from achievements import check_and_unlock_achievements
-
-    log = logging.getLogger(__name__)
     parts = callback.data.split(":", 2)
     if len(parts) != 3:
         await callback.answer("Ошибка данных")

@@ -161,6 +161,7 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     if "bundle" in deal.title.lower():
         title_line += " 📦"
     lines.append(f"\n{title_line}")
+    lines.append(f"🏪 Площадка: <b>{esc(deal.store)}</b>")
 
     # Цена с улучшенным форматированием
     if deal.is_free:
