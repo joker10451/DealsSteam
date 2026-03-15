@@ -134,6 +134,9 @@ async def init_db():
     from minigames import init_minigames_db
     await init_minigames_db()
 
+    # Инициализация таблицы ключей магазина
+    await init_shop_keys_table()
+
 
 # --- posted_deals ---
 
@@ -1095,3 +1098,101 @@ async def record_price_game_answer(user_id: int, deal_id: str) -> bool:
         user_id, deal_id,
     )
     return result == "INSERT 0 1"
+
+
+# --- shop_keys: хранилище ключей для магазина ---
+
+async def init_shop_keys_table():
+    """Создать таблицу ключей магазина."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS shop_keys (
+                id SERIAL PRIMARY KEY,
+                reward_id TEXT NOT NULL,
+                game_title TEXT NOT NULL,
+                key_value TEXT NOT NULL,
+                platform TEXT DEFAULT 'steam',
+                original_price_usd NUMERIC DEFAULT 0,
+                source TEXT DEFAULT 'manual',
+                added_at TIMESTAMPTZ DEFAULT NOW(),
+                claimed_by BIGINT,
+                claimed_at TIMESTAMPTZ,
+                is_available BOOLEAN DEFAULT TRUE
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shop_keys_reward_id ON shop_keys(reward_id, is_available)"
+        )
+
+
+async def add_shop_key(
+    reward_id: str,
+    game_title: str,
+    key_value: str,
+    platform: str = "steam",
+    original_price_usd: float = 0.0,
+    source: str = "manual",
+) -> int:
+    """Добавить ключ в магазин. Возвращает id записи."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row_id = await conn.fetchval("""
+            INSERT INTO shop_keys (reward_id, game_title, key_value, platform, original_price_usd, source)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
+        """, reward_id, game_title, key_value, platform, original_price_usd, source)
+        return row_id
+
+
+async def claim_shop_key(reward_id: str, user_id: int) -> dict | None:
+    """
+    Атомарно выдать один доступный ключ пользователю.
+    Возвращает dict с key_value и game_title или None если ключей нет.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow("""
+                SELECT id, key_value, game_title
+                FROM shop_keys
+                WHERE reward_id = $1 AND is_available = TRUE
+                ORDER BY added_at
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            """, reward_id)
+            if not row:
+                return None
+            await conn.execute("""
+                UPDATE shop_keys
+                SET is_available = FALSE, claimed_by = $2, claimed_at = NOW()
+                WHERE id = $1
+            """, row["id"], user_id)
+            return {"key_value": row["key_value"], "game_title": row["game_title"]}
+
+
+async def get_shop_key_stats() -> list[dict]:
+    """Статистика ключей по reward_id: сколько доступно и выдано."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                reward_id,
+                game_title,
+                COUNT(*) FILTER (WHERE is_available) AS available,
+                COUNT(*) FILTER (WHERE NOT is_available) AS claimed
+            FROM shop_keys
+            GROUP BY reward_id, game_title
+            ORDER BY reward_id
+        """)
+        return [dict(r) for r in rows]
+
+
+async def get_available_key_reward_ids() -> list[str]:
+    """Список reward_id у которых есть хотя бы один доступный ключ."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT DISTINCT reward_id FROM shop_keys WHERE is_available = TRUE
+        """)
+        return [r["reward_id"] for r in rows]

@@ -144,6 +144,22 @@ async def check_and_post() -> Optional[str]:
     _, _, theme_genres = get_daily_theme()
     paid.sort(key=lambda d: (theme_score(d, theme_genres), d.discount), reverse=True)
 
+    # Алерт администратору о критических ошибках цен — возможность закупить ключи
+    if glitches:
+        from price_glitch import check_for_glitch
+        for g in glitches[:3]:
+            glitch_info = await check_for_glitch(g)
+            if glitch_info and glitch_info.get("severity") == "critical":
+                await notify_admin(
+                    f"🚨 <b>ОШИБКА ЦЕНЫ — ЗАКУПИТЬ КЛЮЧИ!</b>\n\n"
+                    f"🎮 {g.title}\n"
+                    f"💥 Скидка: {g.discount}%\n"
+                    f"💰 Цена: {g.new_price} (было {g.old_price})\n"
+                    f"🔗 {g.link}\n\n"
+                    f"⚡️ Купи 10-20 копий — это призовой фонд магазина!\n"
+                    f"После покупки: /givekey [user_id] [ключ]"
+                )
+
     # Приоритет: glitch'и > бесплатные > платные
     combined = glitches + free + paid
     if not combined:

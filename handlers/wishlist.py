@@ -1,4 +1,6 @@
 from html import escape
+import hashlib
+import re
 
 from aiogram import Router, F
 from aiogram.filters import Command
@@ -15,6 +17,17 @@ from database import (
 )
 
 router = Router()
+
+# Временный кэш Steam URL для обхода лимита callback_data (64 байта)
+# key: 8-символьный hex-хэш, value: полный URL
+_steam_url_cache: dict[str, str] = {}
+
+STEAM_PROFILE_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?steamcommunity\.com/(?:id|profiles)/[\w-]+/?"
+    r"|^7656119\d{10}$",  # Steam ID64
+    re.IGNORECASE,
+)
+URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 
 GENRE_MAP = {
     "rpg": "rpg", "рпг": "rpg",
@@ -119,8 +132,15 @@ async def cmd_remove_prompt(message: Message):
     if not items:
         await message.answer("Вишлист пуст.")
         return
-    lines = [f"{i+1}. {esc(item)}" for i, item in enumerate(items)]
-    await message.answer("📋 Напиши <b>/remove [название]</b> чтобы удалить.\n\n" + "\n".join(lines))
+    buttons = [
+        [InlineKeyboardButton(text=f"❌ {item}", callback_data=f"wl_del:{item[:40]}")]
+        for item in items
+    ]
+    buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="wl_done")])
+    await message.answer(
+        "Нажми на игру чтобы удалить:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
 
 
 @router.message(Command("remove", magic=F.args))
@@ -236,6 +256,37 @@ async def handle_wishlist_add(message: Message):
     query = message.text.strip()
     if len(query) < 2:
         return
+
+    # Если пользователь прислал ссылку на Steam-профиль — предлагаем импорт
+    if STEAM_PROFILE_RE.search(query):
+        # Сохраняем URL в кэш, передаём только короткий ключ (8 hex-символов = 16 байт в callback)
+        url_key = hashlib.md5(query.encode()).hexdigest()[:8]
+        _steam_url_cache[url_key] = query
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📥 Импортировать вишлист Steam",
+                callback_data=f"swl:{url_key}",
+            )],
+            [InlineKeyboardButton(
+                text="📚 Импортировать библиотеку Steam",
+                callback_data=f"slib:{url_key}",
+            )],
+        ])
+        await message.answer(
+            "🔗 Похоже, это ссылка на Steam-профиль.\n\n"
+            "Хочешь импортировать игры из него?",
+            reply_markup=keyboard,
+        )
+        return
+
+    # Блокируем любые другие URL — они не могут быть названием игры
+    if URL_RE.search(query):
+        await message.answer(
+            "❌ Ссылки нельзя добавить в вишлист.\n\n"
+            "Напиши название игры, например: <code>Cyberpunk 2077</code>"
+        )
+        return
+
     user_id = message.from_user.id
     added = await wishlist_add(user_id, query)
     if added is None:
@@ -260,6 +311,93 @@ async def handle_wishlist_add(message: Message):
             await send_with_retry(lambda: message.answer(hint_text))
     else:
         await message.answer(f"«{esc(query)}» уже есть в твоём вишлисте.")
+
+
+@router.callback_query(F.data.startswith("swl:"))
+async def cb_steam_import_wishlist_from_url(callback: CallbackQuery):
+    """Импорт вишлиста по ссылке из кнопки под сообщением."""
+    await callback.answer()
+    url_key = callback.data.split(":", 1)[1]
+    profile_url = _steam_url_cache.get(url_key)
+    if not profile_url:
+        await callback.message.edit_text(
+            "❌ Ссылка устарела. Отправь профиль ещё раз."
+        )
+        return
+
+    user_id = callback.from_user.id
+    from steam_api import resolve_steam_id, fetch_wishlist
+    from database import wishlist_add as db_wishlist_add
+
+    status = await callback.message.edit_text("🔄 Загружаю вишлист Steam...")
+
+    steam_id = await resolve_steam_id(profile_url)
+    if not steam_id:
+        await status.edit_text("❌ Не удалось распознать Steam профиль. Попробуй /steam [ссылка]")
+        return
+
+    games = await fetch_wishlist(steam_id)
+    if not games:
+        await status.edit_text(
+            "❌ Вишлист пуст или профиль закрыт.\n"
+            "Убедись что вишлист публичный в настройках Steam."
+        )
+        return
+
+    added_count = 0
+    for title in games[:100]:
+        result = await db_wishlist_add(user_id, title)
+        if result is True:
+            added_count += 1
+        elif result is None:
+            break  # лимит достигнут
+
+    _steam_url_cache.pop(url_key, None)
+    await status.edit_text(
+        f"✅ Импортировано <b>{added_count}</b> игр из Steam вишлиста.\n"
+        f"Пришлю уведомление когда появятся скидки."
+    )
+
+
+@router.callback_query(F.data.startswith("slib:"))
+async def cb_steam_import_library_from_url(callback: CallbackQuery):
+    """Импорт библиотеки по ссылке из кнопки под сообщением."""
+    await callback.answer()
+    url_key = callback.data.split(":", 1)[1]
+    profile_url = _steam_url_cache.get(url_key)
+    if not profile_url:
+        await callback.message.edit_text(
+            "❌ Ссылка устарела. Отправь профиль ещё раз."
+        )
+        return
+
+    user_id = callback.from_user.id
+    from steam_api import resolve_steam_id, fetch_library
+    from database import steam_link_account, steam_library_replace
+
+    status = await callback.message.edit_text("🔄 Загружаю библиотеку Steam...")
+
+    steam_id = await resolve_steam_id(profile_url)
+    if not steam_id:
+        await status.edit_text("❌ Не удалось распознать Steam профиль. Попробуй /steam [ссылка]")
+        return
+
+    appids = await fetch_library(steam_id)
+    if not appids:
+        await status.edit_text(
+            "❌ Библиотека пуста или профиль закрыт.\n"
+            "Убедись что библиотека публичная в настройках Steam."
+        )
+        return
+
+    await steam_link_account(user_id, steam_id)
+    await steam_library_replace(user_id, appids)
+
+    _steam_url_cache.pop(url_key, None)
+    await status.edit_text(
+        f"✅ Библиотека синхронизирована: <b>{len(appids)}</b> игр.\n"
+        f"Теперь бот не будет уведомлять о скидках на игры, которые у тебя уже есть."
+    )
 
 
 @router.message(Command("free"))

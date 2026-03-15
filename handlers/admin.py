@@ -197,9 +197,263 @@ async def cmd_add_points(message: Message):
     await message.answer(f"✅ Начислено {points} баллов пользователю {user_id}")
 
 
+@router.message(Command("addkey"))
+async def cmd_add_key(message: Message):
+    """
+    Добавить ключ в магазин (только админ).
+    Использование: /addkey [reward_id] [game_title] | [KEY-VALUE] [price_usd]
+    Пример: /addkey key_deponia Deponia | XXXXX-XXXXX-XXXXX 29.99
+    Если reward_id не указан — генерируется автоматически из названия игры.
+    """
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    # Парсим аргументы: /addkey [reward_id] [game_title] | [key] [price]
+    # Разделитель | отделяет мета-данные от самого ключа
+    text = message.text.strip()
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "Использование:\n"
+            "<code>/addkey [reward_id] [название игры] | [КЛЮЧ] [цена_usd]</code>\n\n"
+            "Примеры:\n"
+            "<code>/addkey key_deponia Deponia | XXXXX-XXXXX-XXXXX 29.99</code>\n"
+            "<code>/addkey key_deponia Deponia | XXXXX-XXXXX-XXXXX</code>\n\n"
+            "reward_id должен начинаться с <code>key_</code>\n"
+            "Добавить несколько ключей — отправь команду несколько раз."
+        )
+        return
+
+    raw = parts[1]
+    if "|" not in raw:
+        await message.answer("❌ Не хватает разделителя <code>|</code> между названием и ключом.")
+        return
+
+    meta_part, key_part = raw.split("|", 1)
+    meta_tokens = meta_part.strip().split(maxsplit=1)
+    key_tokens = key_part.strip().split()
+
+    if not meta_tokens or not key_tokens:
+        await message.answer("❌ Неверный формат.")
+        return
+
+    # Определяем reward_id и game_title
+    if len(meta_tokens) == 2 and meta_tokens[0].startswith("key_"):
+        reward_id = meta_tokens[0]
+        game_title = meta_tokens[1]
+    elif len(meta_tokens) == 1 and meta_tokens[0].startswith("key_"):
+        reward_id = meta_tokens[0]
+        game_title = meta_tokens[0].replace("key_", "").replace("_", " ").title()
+    else:
+        # Всё — название игры, reward_id генерируем
+        game_title = meta_part.strip()
+        reward_id = "key_" + game_title.lower().replace(" ", "_")[:30]
+
+    key_value = key_tokens[0]
+    price_usd = 0.0
+    if len(key_tokens) > 1:
+        try:
+            price_usd = float(key_tokens[1])
+        except ValueError:
+            pass
+
+    from database import add_shop_key
+    try:
+        key_id = await add_shop_key(
+            reward_id=reward_id,
+            game_title=game_title,
+            key_value=key_value,
+            platform="steam",
+            original_price_usd=price_usd,
+            source="admin",
+        )
+        await message.answer(
+            f"✅ Ключ добавлен (id={key_id})\n"
+            f"🎮 Игра: {esc(game_title)}\n"
+            f"🔑 reward_id: <code>{esc(reward_id)}</code>\n"
+            f"💰 Цена: ${price_usd:.2f}\n\n"
+            f"Теперь этот ключ появится в магазине автоматически."
+        )
+    except Exception as e:
+        log.error(f"Ошибка добавления ключа: {e}")
+        await message.answer(f"❌ Ошибка: {esc(str(e))}")
+
+
+@router.message(Command("keystats"))
+async def cmd_key_stats(message: Message):
+    """Статистика ключей в магазине (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    from database import get_shop_key_stats
+    try:
+        stats = await get_shop_key_stats()
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {esc(str(e))}")
+        return
+
+    if not stats:
+        await message.answer("🔑 Ключей в магазине пока нет.\nДобавь: /addkey")
+        return
+
+    lines = ["🔑 <b>Ключи в магазине:</b>\n"]
+    for row in stats:
+        avail = row["available"]
+        claimed = row["claimed"]
+        status = "✅" if avail > 0 else "❌"
+        lines.append(
+            f"{status} {esc(row['game_title'])}\n"
+            f"   reward_id: <code>{esc(row['reward_id'])}</code>\n"
+            f"   В наличии: {avail} | Выдано: {claimed}"
+        )
+
+    await message.answer("\n\n".join(lines))
+
+
+@router.message(Command("testpost"))
+async def cmd_test_post(message: Message):
+    """Отправить тестовый пост в личку админу (не в канал)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    status_msg = await message.answer("🔄 Собираю скидки для теста...")
+
+    from scheduler import get_top_deals_now
+    from publisher import get_bot
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    try:
+        deals = await get_top_deals_now(limit=1, user_id=message.from_user.id)
+        if not deals:
+            await status_msg.edit_text("❌ Нет подходящих скидок прямо сейчас.")
+            return
+
+        deal = deals[0]
+
+        # Импортируем форматирование из publisher напрямую
+        from publisher import (
+            esc, get_daily_theme, _localize_price, generate_comment,
+            genres_to_hashtags, make_collage,
+        )
+        from enricher import get_steam_rating, get_historical_low
+        from igdb import get_game_info
+        from price_glitch import check_for_glitch, format_glitch_alert
+        from currency import to_rubles
+        from datetime import datetime
+        import pytz, asyncio
+
+        MSK = pytz.timezone("Europe/Moscow")
+        now = datetime.now(MSK).strftime("%d.%m.%Y")
+        store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(deal.store, "🕹")
+
+        glitch_info = await check_for_glitch(deal)
+        rating = historical_low = igdb_info = None
+
+        if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
+            appid = deal.deal_id.replace("steam_", "")
+            rating, historical_low, igdb_info = await asyncio.gather(
+                get_steam_rating(appid),
+                get_historical_low(appid),
+                get_game_info(deal.title),
+            )
+        else:
+            igdb_info = await get_game_info(deal.title)
+
+        theme_emoji, theme_name, _ = get_daily_theme()
+        old_price = await _localize_price(deal.old_price)
+        new_price = await _localize_price(deal.new_price)
+
+        lines = []
+        if glitch_info and glitch_info.get("severity") == "critical":
+            lines.append(f"🚨 <b>ОШИБКА ЦЕНЫ? СРОЧНО! · {now}</b>")
+        elif deal.is_free:
+            lines.append(f"🎁 <b>БЕСПЛАТНО · {now}</b>")
+        elif deal.discount >= 80:
+            lines.append(f"🔥 <b>ОГОНЬ-СКИДКА · {now}</b>")
+        else:
+            lines.append(f"{theme_emoji} <b>{theme_name.upper()} · {now}</b>")
+
+        lines.append(f"\n{store_emoji} <b>{esc(deal.title)}</b>")
+
+        if deal.is_free:
+            lines.append("💸 <s>Платная</s>  →  🆓 <b>БЕСПЛАТНО</b>")
+        else:
+            lines.append(f"💰 <s>{esc(old_price)}</s>  →  ✅ <b>{esc(new_price)}</b>")
+            lines.append(f"🏷 Скидка: <b>−{deal.discount}%</b>")
+
+        if rating:
+            score = rating["score"]
+            score_emoji = "🏆" if score >= 95 else "👍" if score >= 80 else "🙂"
+            lines.append(f"{score_emoji} Steam: <b>{score}%</b>")
+
+        if glitch_info:
+            lines.append(f"\n{format_glitch_alert(deal, glitch_info)}")
+
+        comment = generate_comment(deal, rating)
+        lines.append(f"\n💬 <i>{esc(comment)}</i>")
+
+        hashtags = genres_to_hashtags(deal.genres)
+        if hashtags:
+            lines.append(f"\n{hashtags}")
+
+        lines.append(f"\n\n<i>🧪 Тестовый пост — в канал не отправлялся</i>")
+        text = "\n".join(lines)
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"🛒 Открыть в {deal.store}", url=deal.link)],
+            [
+                InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{deal.deal_id[:40]}"),
+                InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{deal.deal_id[:40]}"),
+                InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"),
+            ],
+        ])
+
+        bot = get_bot()
+        photo = igdb_info.get("cover_url") if igdb_info else None
+        if not photo:
+            photo = deal.image_url
+
+        if photo:
+            await bot.send_photo(
+                message.from_user.id, photo=photo,
+                caption=text, reply_markup=keyboard,
+            )
+        else:
+            await bot.send_message(
+                message.from_user.id, text,
+                reply_markup=keyboard, disable_web_page_preview=True,
+            )
+
+        await status_msg.edit_text("✅ Тестовый пост отправлен тебе в личку.")
+
+    except Exception as e:
+        log.error(f"Ошибка тестового поста: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
+
+
+@router.message(Command("giveaways"))
+async def cmd_giveaways(message: Message):
+    """Показать активные раздачи игр (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    status_msg = await message.answer("🔄 Ищу активные раздачи...")
+    try:
+        from parsers.giveaways import get_all_active_giveaways, format_giveaways_message
+        giveaways = await get_all_active_giveaways()
+        text = format_giveaways_message(giveaways, limit=15)
+        await status_msg.edit_text(text, disable_web_page_preview=True)
+    except Exception as e:
+        log.error(f"Ошибка получения раздач: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
+
+
 @router.message(Command("rewardstats"))
-async def cmd_reward_stats(message: Message):
-    """Статистика по купленным призам (только админ)."""
+async def cmd_reward_stats(message: Message):    """Статистика по купленным призам (только админ)."""
     if not _admin_only(message):
         await message.answer("⛔ Нет доступа.")
         return

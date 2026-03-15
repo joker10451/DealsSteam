@@ -71,7 +71,56 @@ ACTIVE_PROMOTIONS: dict = {}
 EXCLUSIVE_REWARDS: dict = {}
 
 
-async def init_rewards_table():
+async def get_key_rewards_catalog() -> dict:
+    """
+    Возвращает динамические слоты ключей из БД.
+    Каждый уникальный reward_id из shop_keys с доступными ключами
+    становится позицией в магазине.
+    """
+    from database import get_pool as _get_pool
+    try:
+        pool = await _get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT
+                    reward_id,
+                    game_title,
+                    platform,
+                    original_price_usd,
+                    COUNT(*) AS available
+                FROM shop_keys
+                WHERE is_available = TRUE
+                GROUP BY reward_id, game_title, platform, original_price_usd
+                ORDER BY original_price_usd DESC
+            """)
+    except Exception as e:
+        log.warning(f"Не удалось загрузить ключи из БД: {e}")
+        return {}
+
+    catalog = {}
+    for row in rows:
+        rid = row["reward_id"]
+        price_usd = float(row["original_price_usd"] or 0)
+        # Стоимость в баллах: ~100 баллов за $1, минимум 50
+        cost_points = max(50, int(price_usd * 100))
+        platform_emoji = "🎮" if row["platform"] == "steam" else "🕹"
+        catalog[rid] = {
+            "name": f"{platform_emoji} {row['game_title']}",
+            "description": (
+                f"Steam-ключ для активации игры. "
+                f"В наличии: {row['available']} шт."
+                + (f" (оригинальная цена ~${price_usd:.0f})" if price_usd else "")
+            ),
+            "cost": cost_points,
+            "type": "game_key",
+            "category": "keys",
+            "emoji": platform_emoji,
+            "available": row["available"],
+            "platform": row["platform"],
+        }
+    return catalog
+
+
     """Создать таблицы для системы призов."""
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -107,12 +156,57 @@ async def get_user_balance(user_id: int) -> int:
 
 async def purchase_reward(user_id: int, reward_id: str) -> dict:
     """Купить приз за баллы."""
-    if reward_id not in REWARDS_CATALOG:
+    # Проверяем статичный каталог, затем динамические ключи
+    reward = REWARDS_CATALOG.get(reward_id)
+    if reward is None:
+        key_catalog = await get_key_rewards_catalog()
+        reward = key_catalog.get(reward_id)
+    if reward is None:
         return {"error": "Приз не найден"}
-    
-    reward = REWARDS_CATALOG[reward_id]
+
     cost = reward["cost"]
-    
+
+    # Для ключей — сначала проверяем наличие до списания баллов
+    if reward["type"] == "game_key":
+        from database import claim_shop_key
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            balance = await conn.fetchval(
+                "SELECT total_score FROM user_scores WHERE user_id = $1", user_id
+            )
+            if balance is None or balance < cost:
+                return {"error": f"Недостаточно баллов. Нужно: {cost}, у тебя: {balance or 0}"}
+
+            async with conn.transaction():
+                locked_balance = await conn.fetchval(
+                    "SELECT total_score FROM user_scores WHERE user_id = $1 FOR UPDATE", user_id
+                )
+                if locked_balance is None or locked_balance < cost:
+                    return {"error": f"Недостаточно баллов. Нужно: {cost}, у тебя: {locked_balance or 0}"}
+
+                key_data = await claim_shop_key(reward_id, user_id)
+                if not key_data:
+                    return {"error": "Ключи закончились 😔 Попробуй позже."}
+
+                await conn.execute(
+                    "UPDATE user_scores SET total_score = total_score - $2 WHERE user_id = $1",
+                    user_id, cost,
+                )
+                await conn.execute(
+                    "INSERT INTO user_rewards (user_id, reward_id, is_claimed) VALUES ($1, $2, TRUE)",
+                    user_id, reward_id,
+                )
+
+        log.info(f"Пользователь {user_id} получил ключ {reward_id}")
+        return {
+            "success": True,
+            "reward": reward,
+            "cost": cost,
+            "new_balance": locked_balance - cost,
+            "key_value": key_data["key_value"],
+            "game_title": key_data["game_title"],
+        }
+
     pool = await get_pool()
     async with pool.acquire() as conn:
         # Проверяем баланс

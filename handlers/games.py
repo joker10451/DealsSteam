@@ -394,18 +394,20 @@ async def cmd_my_rewards(message: Message):
 @router.message(Command("buy"))
 async def cmd_buy(message: Message):
     """Купить приз за баллы."""
-    from rewards import REWARDS_CATALOG, purchase_reward
+    from rewards import REWARDS_CATALOG, get_key_rewards_catalog, purchase_reward
     
     user_id = message.from_user.id
     args = message.text.split(maxsplit=1)
     
     if len(args) < 2:
-        # Показываем список доступных призов с ID
+        # Показываем список доступных призов с ID (статичные + ключи из БД)
+        key_catalog = await get_key_rewards_catalog()
+        full_catalog = {**REWARDS_CATALOG, **key_catalog}
         lines = ["🏪 <b>Доступные призы:</b>\n"]
-        for reward_id, reward in REWARDS_CATALOG.items():
-            lines.append(f"<code>{reward_id}</code> — {reward['name']}")
+        for reward_id, reward in full_catalog.items():
+            avail = f" [{reward['available']} шт.]" if reward.get("available") else ""
+            lines.append(f"<code>{reward_id}</code> — {reward['name']}{avail}")
             lines.append(f"💰 {reward['cost']} баллов\n")
-        
         lines.append("Используй: /buy [id_приза]")
         await message.answer("\n".join(lines))
         return
@@ -419,6 +421,19 @@ async def cmd_buy(message: Message):
         return
     
     reward = result["reward"]
+
+    # Ключ выдаётся автоматически — показываем сразу
+    if result.get("key_value"):
+        text = (
+            f"🎮 <b>{esc(result['game_title'])}</b>\n\n"
+            f"Твой ключ:\n<code>{esc(result['key_value'])}</code>\n\n"
+            f"Активируй в Steam: Игры → Активировать продукт\n\n"
+            f"💰 Списано: <b>{result['cost']}</b> баллов\n"
+            f"💳 Новый баланс: <b>{result['new_balance']}</b> баллов"
+        )
+        await message.answer(text)
+        return
+
     text = f"""
 ✅ <b>Приз куплен!</b>
 
@@ -430,19 +445,6 @@ async def cmd_buy(message: Message):
 
 📦 Используй /myrewards для просмотра призов
 """
-    
-    # Если это ключ, уведомляем админа
-    if "steam_key" in reward_id:
-        from publisher import notify_admin
-        username = message.from_user.username or f"ID: {user_id}"
-        await notify_admin(
-            f"🎮 Новая покупка ключа!\n\n"
-            f"Пользователь: @{username}\n"
-            f"Приз: {reward['name']}\n"
-            f"Стоимость: {result['cost']} баллов\n\n"
-            f"Используй /givekey {user_id} [ключ] для выдачи"
-        )
-    
     await message.answer(text.strip())
 
 
@@ -595,6 +597,22 @@ async def confirm_buy_callback(callback: CallbackQuery):
         return
     
     reward = result["reward"]
+
+    # Ключ выдаётся автоматически — показываем сразу
+    if result.get("key_value"):
+        text = (
+            f"🎮 <b>{esc(result['game_title'])}</b>\n\n"
+            f"Твой ключ:\n<code>{esc(result['key_value'])}</code>\n\n"
+            f"Активируй в Steam: Игры → Активировать продукт\n\n"
+            f"💰 Списано: <b>{result['cost']}</b> баллов\n"
+            f"💳 Новый баланс: <b>{result['new_balance']}</b> баллов"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏪 Магазин", callback_data="show_shop")]
+        ])
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        return
+
     text = f"""
 ✅ <b>Приз куплен!</b>
 
@@ -604,20 +622,6 @@ async def confirm_buy_callback(callback: CallbackQuery):
 💰 Списано: <b>{result['cost']}</b> баллов
 💳 Новый баланс: <b>{result['new_balance']}</b> баллов
 """
-    
-    # Если это ключ, уведомляем админа
-    if "steam_key" in reward_id:
-        from publisher import notify_admin
-        username = callback.from_user.username or f"ID: {user_id}"
-        await notify_admin(
-            f"🎮 Новая покупка ключа!\n\n"
-            f"Пользователь: @{username}\n"
-            f"Приз: {reward['name']}\n"
-            f"Стоимость: {result['cost']} баллов\n\n"
-            f"Используй /givekey {user_id} [ключ] для выдачи"
-        )
-        text += "\n📬 Администратор скоро отправит тебе ключ в личные сообщения."
-    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📦 Мои призы", callback_data="show_my_rewards")],
         [InlineKeyboardButton(text="🏪 Магазин", callback_data="show_shop")]

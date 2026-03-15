@@ -95,12 +95,10 @@ async def register_referral(referrer_id: int, referee_id: int) -> dict:
         if referrer_count and referrer_count >= 50:
             return {"error": "Достигнут лимит приглашений"}
 
-        # Проверяем, не новый ли это пользователь (не играл раньше)
-        games_played = await conn.fetchval("""
-            SELECT games_played FROM user_scores WHERE user_id = $1
-        """, referee_id)
-
-        if games_played is not None and games_played > 0:
+        # Проверяем, не новый ли это пользователь (нет записи онбординга)
+        from database import get_onboarding_progress
+        onboarding = await get_onboarding_progress(referee_id)
+        if onboarding is not None:
             return {"error": "Реферальная ссылка работает только для новых пользователей"}
         
         # Регистрируем реферала
