@@ -40,11 +40,5 @@ Thumbs.db
 # Pytest cache
 .pytest_cache/
 
-# Рабочие заметки и документация (не для репозитория)
-CHANNEL_LAUNCH_CHECKLIST.md
-CONVERSION_ANALYSIS.md
-DTF_POST.md
-PIKABU_POST.md
-WHY_DOWNVOTES.md
-YOUTUBE_COMMENTS.md
-YOUTUBE_STRATEGY.md
+# Документация (перенесена в docs/)
+docs/
