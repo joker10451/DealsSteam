@@ -494,13 +494,16 @@ async def publish_screenshot_game(deal, igdb_info):
     options = game_data["options"]
     game_id = game_data["game_id"]
     
-    # Создаём кнопки с вариантами ответов
+    # Создаём кнопки с вариантами ответов — используем индекс вместо текста
+    # чтобы не превышать лимит callback_data в 64 байта
+    # game_id обрезаем до 40 символов: "scr:" (4) + game_id (40) + ":0" (2) = 46 байт макс
+    short_gid = game_id[:40]
     buttons = [
         InlineKeyboardButton(
             text=option,
-            callback_data=f"screenshot:{game_id}:{option}"
+            callback_data=f"scr:{short_gid}:{i}"
         )
-        for option in options
+        for i, option in enumerate(options)
     ]
     
     # Размещаем кнопки по 2 в ряд

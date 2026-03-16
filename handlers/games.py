@@ -10,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from achievements import check_and_unlock_achievements
-from database import get_price_game, record_price_game_answer
+from database import get_price_game, record_price_game_answer, get_pool
 from minigames import (
     get_user_score, get_leaderboard, check_screenshot_answer,
     get_daily_challenge, complete_daily_challenge, add_score,
@@ -150,7 +150,7 @@ async def cmd_challenge(message: Message):
     await message.answer(text.strip())
 
 
-@router.callback_query(lambda c: c.data and c.data.startswith("screenshot:"))
+@router.callback_query(lambda c: c.data and c.data.startswith("scr:"))
 async def handle_screenshot_answer(callback: CallbackQuery):
     """Обработать ответ на игру со скриншотом."""
     user_id = callback.from_user.id
@@ -160,9 +160,31 @@ async def handle_screenshot_answer(callback: CallbackQuery):
         await callback.answer("Ошибка данных")
         return
     
-    game_id = data_parts[1]
-    answer = data_parts[2]
-    
+    short_gid = data_parts[1]
+    try:
+        option_idx = int(data_parts[2])
+    except ValueError:
+        await callback.answer("Ошибка данных")
+        return
+
+    # Восстанавливаем полный game_id и получаем варианты из БД
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT game_id, options FROM screenshot_games WHERE game_id LIKE $1 || '%' LIMIT 1",
+            short_gid
+        )
+    if not row:
+        await callback.answer("Игра не найдена или устарела", show_alert=True)
+        return
+
+    game_id = row["game_id"]
+    options = row["options"]
+    if option_idx >= len(options):
+        await callback.answer("Ошибка данных")
+        return
+    answer = options[option_idx]
+
     result = await check_screenshot_answer(
         user_id, game_id, answer,
         username=callback.from_user.username or callback.from_user.first_name
