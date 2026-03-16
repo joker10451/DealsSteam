@@ -111,6 +111,8 @@ async def main():
         BotCommand(command="giveawaystat", description="Статистика участников конкурса"),
         BotCommand(command="giveawayhistory", description="История конкурсов"),
         BotCommand(command="announce_referral", description="Разослать анонс реферальной программы"),
+        BotCommand(command="broadcast", description="Рассылка сообщения всем пользователям"),
+        BotCommand(command="channelstat", description="Статистика пользователей бота"),
     ]
 
     await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())

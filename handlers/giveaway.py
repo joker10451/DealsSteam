@@ -294,6 +294,10 @@ async def callback_giveaway_join(callback: CallbackQuery):
                     [InlineKeyboardButton(
                         text="🎲 Участвовать",
                         callback_data=f"giveaway_join:{giveaway_id}"
+                    )],
+                    [InlineKeyboardButton(
+                        text="📢 Поделиться",
+                        switch_inline_query=f"🎁 Розыгрыш {esc(giveaway['title'])}! Участвуй → t.me/GameDealsRadarRu"
                     )]
                 ])
                 

@@ -608,3 +608,104 @@ async def cmd_announce_referral(message: Message):
         f"Отправлено: <b>{result['sent']}</b>\n"
         f"Ошибок: <b>{result['failed']}</b>"
     )
+
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast(message: Message):
+    """Рассылка произвольного сообщения всем пользователям (только админ).
+    Использование: /broadcast Текст сообщения
+    """
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer(
+            "Использование: <code>/broadcast Текст сообщения</code>\n\n"
+            "Поддерживает HTML-теги: &lt;b&gt;, &lt;i&gt;, &lt;code&gt;, &lt;a href=...&gt;"
+        )
+        return
+
+    text = args[1].strip()
+    await message.answer(f"📢 Начинаю рассылку...\n\nПревью:\n{text}")
+
+    from database import get_pool
+    from publisher import get_bot
+    import asyncio
+
+    pool = await get_pool()
+    users = await pool.fetch("SELECT user_id FROM user_scores")
+
+    bot = get_bot()
+    sent = 0
+    failed = 0
+
+    for row in users:
+        try:
+            await bot.send_message(row["user_id"], text)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+
+    await message.answer(
+        f"✅ <b>Рассылка завершена</b>\n\n"
+        f"Отправлено: <b>{sent}</b>\n"
+        f"Ошибок: <b>{failed}</b>"
+    )
+
+
+@router.message(Command("channelstat"))
+async def cmd_channel_stat(message: Message):
+    """Статистика пользователей бота (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    from database import get_pool
+
+    pool = await get_pool()
+
+    total_users = await pool.fetchval("SELECT COUNT(*) FROM user_scores") or 0
+    active_7d = await pool.fetchval("""
+        SELECT COUNT(DISTINCT user_id) FROM user_score_history
+        WHERE recorded_at >= NOW() - INTERVAL '7 days'
+    """) or 0
+    active_30d = await pool.fetchval("""
+        SELECT COUNT(DISTINCT user_id) FROM user_score_history
+        WHERE recorded_at >= NOW() - INTERVAL '30 days'
+    """) or 0
+    wishlist_users = await pool.fetchval(
+        "SELECT COUNT(DISTINCT user_id) FROM wishlist"
+    ) or 0
+    total_wishlist = await pool.fetchval("SELECT COUNT(*) FROM wishlist") or 0
+    giveaway_participants = await pool.fetchval(
+        "SELECT COUNT(DISTINCT user_id) FROM giveaway_participants"
+    ) or 0
+    referrals_total = await pool.fetchval("SELECT COUNT(*) FROM referrals") or 0
+    top_score = await pool.fetchrow(
+        "SELECT user_id, total_score FROM user_scores ORDER BY total_score DESC LIMIT 1"
+    )
+
+    lines = [
+        "📊 <b>Статистика бота</b>\n",
+        f"👥 Всего пользователей: <b>{total_users}</b>",
+        f"🟢 Активных за 7 дней: <b>{active_7d}</b>",
+        f"📅 Активных за 30 дней: <b>{active_30d}</b>",
+        f"📋 Пользователей с вишлистом: <b>{wishlist_users}</b>",
+        f"🎮 Игр в вишлистах: <b>{total_wishlist}</b>",
+        f"🎁 Участников конкурсов: <b>{giveaway_participants}</b>",
+        f"🔗 Рефералов всего: <b>{referrals_total}</b>",
+    ]
+
+    if top_score:
+        try:
+            bot = message.bot
+            user = await bot.get_chat(top_score["user_id"])
+            name = f"@{user.username}" if user.username else esc(user.first_name)
+        except Exception:
+            name = str(top_score["user_id"])
+        lines.append(f"\n🏆 Топ игрок: {name} — <b>{top_score['total_score']} баллов</b>")
+
+    await message.answer("\n".join(lines))
