@@ -107,6 +107,7 @@ async def main():
         BotCommand(command="rewardstats", description="Статистика призов"),
         BotCommand(command="creategiveaway", description="Создать конкурс"),
         BotCommand(command="endgiveaway", description="Завершить конкурс"),
+        BotCommand(command="giveawaystat", description="Статистика участников конкурса"),
         BotCommand(command="announce_referral", description="Разослать анонс реферальной программы"),
     ]
 

@@ -238,6 +238,68 @@ async def callback_giveaway_join(callback: CallbackQuery):
         await callback.answer(msg, show_alert=True)
 
 
+@router.message(Command("giveawaystat"))
+async def cmd_giveaway_stat(message: Message):
+    """Статистика участников конкурса (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer(
+            "Использование: <code>/giveawaystat [giveaway_id]</code>\n\n"
+            "Пример: <code>/giveawaystat giveaway_1234567890</code>"
+        )
+        return
+
+    giveaway_id = args[1].strip()
+
+    from database import get_pool
+    from giveaways import get_giveaway_participants
+
+    pool = await get_pool()
+    giveaway = await pool.fetchrow("SELECT * FROM giveaways WHERE giveaway_id = $1", giveaway_id)
+
+    if not giveaway:
+        await message.answer("❌ Конкурс не найден")
+        return
+
+    participants = await get_giveaway_participants(giveaway_id)
+
+    if not participants:
+        await message.answer(f"👥 Участников пока нет в конкурсе <code>{giveaway_id}</code>")
+        return
+
+    # Считаем шансы каждого
+    rows = []
+    total_slots = 0
+    for user_id in participants:
+        referral_count = await pool.fetchval(
+            "SELECT COUNT(*) FROM referrals WHERE referrer_id = $1", user_id
+        ) or 0
+        slots = 1 + int(referral_count)
+        total_slots += slots
+        rows.append((user_id, slots, int(referral_count)))
+
+    rows.sort(key=lambda x: x[1], reverse=True)
+
+    lines = [
+        f"📊 <b>{esc(giveaway['title'])}</b>\n"
+        f"👥 Участников: {len(participants)} | Всего слотов: {total_slots}\n"
+    ]
+
+    for user_id, slots, refs in rows[:30]:  # показываем топ 30
+        chance = slots / total_slots * 100
+        ref_str = f" (+{refs} реф.)" if refs > 0 else ""
+        lines.append(f"• <code>{user_id}</code>{ref_str} — {slots} шанс. ({chance:.1f}%)")
+
+    if len(participants) > 30:
+        lines.append(f"\n<i>...и ещё {len(participants) - 30} участников</i>")
+
+    await message.answer("\n".join(lines))
+
+
 @router.message(Command("mygiveaways"))
 async def cmd_my_giveaways(message: Message):
     """Показать конкурсы, в которых участвует пользователь."""
