@@ -150,40 +150,48 @@ async def cmd_challenge(message: Message):
     await message.answer(text.strip())
 
 
-@router.callback_query(lambda c: c.data and c.data.startswith("scr:"))
+@router.callback_query(lambda c: c.data and (c.data.startswith("scr:") or c.data.startswith("screenshot:")))
 async def handle_screenshot_answer(callback: CallbackQuery):
     """Обработать ответ на игру со скриншотом."""
     user_id = callback.from_user.id
-    data_parts = callback.data.split(":", 2)
-    
-    if len(data_parts) != 3:
-        await callback.answer("Ошибка данных")
-        return
-    
-    short_gid = data_parts[1]
-    try:
-        option_idx = int(data_parts[2])
-    except ValueError:
-        await callback.answer("Ошибка данных")
-        return
 
-    # Восстанавливаем полный game_id и получаем варианты из БД
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT game_id, options FROM screenshot_games WHERE game_id LIKE $1 || '%' LIMIT 1",
-            short_gid
-        )
-    if not row:
-        await callback.answer("Игра не найдена или устарела", show_alert=True)
-        return
+    # Новый формат: scr:<short_gid>:<index>
+    if callback.data.startswith("scr:"):
+        data_parts = callback.data.split(":", 2)
+        if len(data_parts) != 3:
+            await callback.answer("Ошибка данных")
+            return
+        short_gid = data_parts[1]
+        try:
+            option_idx = int(data_parts[2])
+        except ValueError:
+            await callback.answer("Ошибка данных")
+            return
 
-    game_id = row["game_id"]
-    options = row["options"]
-    if option_idx >= len(options):
-        await callback.answer("Ошибка данных")
-        return
-    answer = options[option_idx]
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT game_id, options FROM screenshot_games WHERE game_id LIKE $1 || '%' LIMIT 1",
+                short_gid
+            )
+        if not row:
+            await callback.answer("Игра не найдена или устарела", show_alert=True)
+            return
+        game_id = row["game_id"]
+        options = row["options"]
+        if option_idx >= len(options):
+            await callback.answer("Ошибка данных")
+            return
+        answer = options[option_idx]
+
+    # Старый формат: screenshot:<game_id>:<answer_text>
+    else:
+        data_parts = callback.data.split(":", 2)
+        if len(data_parts) != 3:
+            await callback.answer("Ошибка данных")
+            return
+        game_id = data_parts[1]
+        answer = data_parts[2]
 
     result = await check_screenshot_answer(
         user_id, game_id, answer,
