@@ -104,17 +104,12 @@ async def _localize_price(price_str: str) -> str:
     return format_rub(rub) if rub else price_str.lstrip("~")
 
 
-async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_priority: bool = False) -> bool:
+async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_priority: bool = False) -> tuple[bool, Optional[dict]]:
     """
     Публикует сделку в канал.
     
-    Args:
-        deal: Объект Deal для публикации
-        prefetched_rating: Предзагруженный рейтинг (опционально)
-        is_priority: Если True, публикуется немедленно (для glitch'ей и бесплатных игр)
-    
     Returns:
-        True если публикация успешна
+        (True, historical_low) если публикация успешна, (False, None) при ошибке
     """
     now = datetime.now(MSK).strftime("%d.%m.%Y")
     store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(deal.store, "🕹")

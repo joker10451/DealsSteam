@@ -178,12 +178,11 @@ async def check_and_post() -> Optional[str]:
 
     for deal in combined[:5]:  # пробуем до 5 кандидатов
         is_priority = deal in glitches or deal.is_free
-        result = await publish_single(
+        ok, historical_low = await publish_single(
             deal,
             prefetched_rating=rating_cache.get(deal.deal_id),
             is_priority=is_priority
         )
-        ok, historical_low = result if result else (False, None)
         if ok:
             post_time = datetime.now(MSK).isoformat()
             await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount, deal.link)
