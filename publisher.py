@@ -142,7 +142,9 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     else:
         igdb_info = await get_game_info(deal.title)
 
-    is_historic = bool(historical_low and deal.discount >= 70)
+    # Используем флаг is_current_low из ITAD если доступен, иначе fallback по скидке
+    is_current_low = bool(historical_low and historical_low.get("is_current_low"))
+    is_historic = is_current_low or bool(historical_low and deal.discount >= 70)
     theme_emoji, theme_name, _ = get_daily_theme()
 
     old_price = await _localize_price(deal.old_price)
@@ -160,7 +162,10 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         lines.append(f"🎁 <b>{adult_prefix}БЕСПЛАТНО · {now}</b>")
     elif is_historic:
         lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
-        lines.append(f"⚡️ <i>Исторический минимум цены!</i>")
+        if is_current_low:
+            lines.append(f"📉 <i>Исторический минимум цены!</i>")
+        else:
+            lines.append(f"⚡️ <i>Близко к историческому минимуму!</i>")
     elif deal.discount >= 80:
         lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
         lines.append(f"🔥 <i>Огонь-скидка −{deal.discount}%!</i>")
@@ -204,7 +209,8 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     if historical_low and historical_low.get("price"):
         low_rub = await to_rubles(float(historical_low["price"]), "USD")
         if low_rub:
-            lines.append(f"📉 Истор. минимум: <b>{format_rub(low_rub)}</b>")
+            low_label = "📉 <b>Исторический минимум!</b>" if historical_low.get("is_current_low") else "📉 Истор. минимум:"
+            lines.append(f"{low_label} <b>{format_rub(low_rub)}</b>")
     
     # Предупреждение об ошибке цены (если обнаружена)
     if glitch_info:
@@ -426,7 +432,19 @@ async def notify_wishlist_users(deal):
             send_now.append(uid)
 
     if send_now:
-        await notify_users(send_now, deal, "🔔 <b>Скидка на игру из твоего вишлиста!</b>")
+        # Проверяем исторический минимум для заголовка уведомления
+        hist_low = None
+        if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
+            appid = deal.deal_id.replace("steam_", "")
+            from enricher import get_historical_low
+            hist_low = await get_historical_low(appid)
+        
+        if hist_low and hist_low.get("is_current_low"):
+            header = "🔔 <b>Скидка на игру из вишлиста!</b>\n📉 <i>Сейчас — исторический минимум цены!</i>"
+        else:
+            header = "🔔 <b>Скидка на игру из твоего вишлиста!</b>"
+        
+        await notify_users(send_now, deal, header)
         await increment_metric("wishlist_notify", len(send_now))
 
     if queued:

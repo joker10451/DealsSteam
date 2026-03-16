@@ -45,4 +45,4 @@ PRICE_COMPARISON_ENABLED = os.getenv("PRICE_COMPARISON_ENABLED", "true").lower()
 
 # Steam sync rate limiting
 STEAM_SYNC_COOLDOWN_HOURS = int(os.getenv("STEAM_SYNC_COOLDOWN_HOURS", "1"))
-PRICE_CACHE_HOURS = int(os.getenv("PRICE_CACHE_HOURS", "6"))
+ITAD_API_KEY = os.getenv("ITAD_API_KEY", "")

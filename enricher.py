@@ -72,23 +72,83 @@ async def get_steam_rating(appid: str) -> Optional[dict]:
         return None
 
 
-# --- Исторический минимум через CheapShark ---
+# --- Исторический минимум через IsThereAnyDeal ---
 
-CS_LOWEST_URL = "https://www.cheapshark.com/api/1.0/games?steamAppID={appid}"
+ITAD_LOOKUP_URL = "https://api.isthereanydeal.com/games/lookup/v1"
+ITAD_PRICES_URL = "https://api.isthereanydeal.com/games/prices/v3"
+
+
+async def _itad_get_game_id(appid: str) -> Optional[str]:
+    """Получить ITAD game ID по Steam appid."""
+    from config import ITAD_API_KEY
+    if not ITAD_API_KEY:
+        return None
+    cached = _cache_get(f"itad_id:{appid}")
+    if cached is not None:
+        return cached
+    try:
+        from parsers.utils import fetch_with_retry
+        data = await fetch_with_retry(
+            f"{ITAD_LOOKUP_URL}?key={ITAD_API_KEY}&appid={appid}"
+        )
+        if not data:
+            return None
+        game_id = data.get("game", {}).get("id")
+        if game_id:
+            _cache_set(f"itad_id:{appid}", game_id, ttl=24 * 3600)
+        return game_id
+    except Exception:
+        return None
 
 
 async def get_historical_low(appid: str) -> Optional[dict]:
-    """Возвращает {'price': '4.99', 'is_current_low': True/False}"""
+    """Возвращает {'price': '4.99', 'is_current_low': True/False} через ITAD."""
+    from config import ITAD_API_KEY
+
     cached = _cache_get(f"histlow:{appid}")
     if cached is not None:
         return cached
 
+    # Пробуем ITAD если есть ключ
+    if ITAD_API_KEY:
+        try:
+            game_id = await _itad_get_game_id(appid)
+            if game_id:
+                from parsers.utils import fetch_with_retry
+                data = await fetch_with_retry(
+                    f"{ITAD_PRICES_URL}?key={ITAD_API_KEY}&id={game_id}&country=US"
+                )
+                if data and isinstance(data, list) and data:
+                    game_data = data[0]
+                    deals = game_data.get("deals", [])
+                    if deals:
+                        # Ищем исторический минимум среди всех магазинов
+                        hist_low = None
+                        is_current_low = False
+                        for deal in deals:
+                            hl = deal.get("historyLow", {})
+                            if hl and hl.get("amount") is not None:
+                                if hist_low is None or hl["amount"] < hist_low:
+                                    hist_low = hl["amount"]
+                            # Флаг H = текущая цена = исторический минимум
+                            if deal.get("flag") == "H":
+                                is_current_low = True
+                        if hist_low is not None:
+                            result = {
+                                "price": str(round(hist_low, 2)),
+                                "is_current_low": is_current_low,
+                            }
+                            _cache_set(f"histlow:{appid}", result, ttl=6 * 3600)
+                            return result
+        except Exception:
+            pass
+
+    # Fallback: CheapShark
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(CS_LOWEST_URL.format(appid=appid), timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status != 200:
-                    return None
-                data = await r.json(content_type=None)
+        from parsers.utils import fetch_with_retry
+        data = await fetch_with_retry(
+            f"https://www.cheapshark.com/api/1.0/games?steamAppID={appid}"
+        )
         if not data:
             return None
         game = data[0] if isinstance(data, list) else data
@@ -96,7 +156,7 @@ async def get_historical_low(appid: str) -> Optional[dict]:
         lowest_price = lowest.get("price")
         if not lowest_price:
             return None
-        result = {"price": lowest_price}
+        result = {"price": lowest_price, "is_current_low": False}
         _cache_set(f"histlow:{appid}", result, ttl=6 * 3600)
         return result
     except Exception:
