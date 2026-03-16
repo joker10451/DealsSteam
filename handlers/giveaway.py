@@ -69,15 +69,16 @@ async def cmd_create_giveaway(message: Message):
     if len(args) < 2:
         await message.answer(
             "Использование:\n"
-            "<code>/creategiveaway [название] | [описание] | [тип] | [значение] | [часы]</code>\n\n"
+            "<code>/creategiveaway [название] | [описание] | [тип] | [значение] | [часы] | [мин. возраст дней]</code>\n\n"
             "Типы призов:\n"
             "• <code>steam_key</code> - Steam ключ\n"
             "• <code>points</code> - Баллы\n"
             "• <code>subscription</code> - Подписка/приз из магазина\n\n"
+            "Последний параметр необязателен (по умолчанию 7 дней, 0 = без ограничений)\n\n"
             "Примеры:\n"
             "<code>/creategiveaway Portal 2 | Классика от Valve | steam_key | XXXXX-XXXXX-XXXXX | 72</code>\n"
-            "<code>/creategiveaway 1000 баллов | Потрать в магазине | points | 1000 | 48</code>\n"
-            "<code>/creategiveaway VIP статус | Месяц VIP | subscription | vip_badge | 72</code>"
+            "<code>/creategiveaway Portal 2 | Классика от Valve | steam_key | XXXXX-XXXXX-XXXXX | 72 | 0</code>\n"
+            "<code>/creategiveaway 1000 баллов | Потрать в магазине | points | 1000 | 48 | 0</code>"
         )
         return
     
@@ -92,6 +93,7 @@ async def cmd_create_giveaway(message: Message):
         prize_type = parts[2]
         prize_value = parts[3]
         duration_hours = int(parts[4])
+        min_account_age_days = int(parts[5]) if len(parts) >= 6 else 7
         
         if prize_type not in ["steam_key", "points", "subscription"]:
             await message.answer("❌ Неверный тип приза")
@@ -104,7 +106,8 @@ async def cmd_create_giveaway(message: Message):
             description=description,
             prize_type=prize_type,
             prize_value=prize_value,
-            duration_hours=duration_hours
+            duration_hours=duration_hours,
+            min_account_age_days=min_account_age_days
         )
         
         # Публикуем в канале
