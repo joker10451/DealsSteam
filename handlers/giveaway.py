@@ -46,11 +46,17 @@ async def cmd_giveaway(message: Message):
             "points": "⭐",
             "subscription": "👑"
         }.get(g["prize_type"], "🎁")
+
+        channel_link = ""
+        if g.get("channel_post_id"):
+            from config import CHANNEL_ID
+            channel_username = str(CHANNEL_ID).lstrip("-100")
+            channel_link = f"\n🔗 <a href=\"https://t.me/GameDealsRadarRu/{g['channel_post_id']}\">Перейти к розыгрышу</a>"
         
         lines.append(
             f"{prize_emoji} <b>{esc(g['title'])}</b>\n"
             f"👥 Участников: {g['participants_count']}\n"
-            f"⏰ До: {end_str} МСК\n"
+            f"⏰ До: {end_str} МСК{channel_link}\n"
         )
     
     lines.append("\n<i>Участвуй через кнопки в постах канала!</i>")
@@ -132,7 +138,78 @@ async def cmd_create_giveaway(message: Message):
         await message.answer(f"❌ Ошибка: {esc(str(e))}")
 
 
-@router.message(Command("endgiveaway"))
+@router.message(Command("deletegiveaway"))
+async def cmd_delete_giveaway(message: Message):
+    """Удалить конкурс (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer(
+            "Использование: <code>/deletegiveaway [giveaway_id]</code>\n\n"
+            "Пример: <code>/deletegiveaway giveaway_1234567890</code>"
+        )
+        return
+
+    giveaway_id = args[1].strip()
+    from giveaways import delete_giveaway
+
+    status_msg = await message.answer("🔄 Удаляю конкурс...")
+    try:
+        success, msg = await delete_giveaway(giveaway_id)
+        await status_msg.edit_text("✅ Конкурс удалён!" if success else f"❌ {esc(msg)}")
+    except Exception as e:
+        log.error(f"Ошибка удаления конкурса: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
+
+
+@router.message(Command("giveawayhistory"))
+async def cmd_giveaway_history(message: Message):
+    """История завершённых конкурсов (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    from database import get_pool
+    import pytz
+    MSK = pytz.timezone("Europe/Moscow")
+
+    pool = await get_pool()
+    rows = await pool.fetch("""
+        SELECT g.*, COUNT(p.user_id) as participants_count
+        FROM giveaways g
+        LEFT JOIN giveaway_participants p ON g.giveaway_id = p.giveaway_id
+        WHERE g.status = 'ended'
+        GROUP BY g.giveaway_id
+        ORDER BY g.end_time DESC
+        LIMIT 10
+    """)
+
+    if not rows:
+        await message.answer("📭 Завершённых конкурсов пока нет.")
+        return
+
+    lines = ["📋 <b>История конкурсов (последние 10):</b>\n"]
+    bot = message.bot
+    for r in rows:
+        end_str = r["end_time"].replace(tzinfo=MSK).strftime("%d.%m.%Y")
+        winner_str = "нет участников"
+        if r["winner_user_id"]:
+            try:
+                winner = await bot.get_chat(r["winner_user_id"])
+                winner_str = f"@{winner.username}" if winner.username else f'<a href="tg://user?id={r["winner_user_id"]}">{esc(winner.first_name)}</a>'
+            except Exception:
+                winner_str = f"id:{r['winner_user_id']}"
+
+        prize_emoji = {"steam_key": "🎮", "points": "⭐", "subscription": "👑"}.get(r["prize_type"], "🎁")
+        lines.append(
+            f"{prize_emoji} <b>{esc(r['title'])}</b> ({end_str})\n"
+            f"👥 {r['participants_count']} уч. | 🏆 {winner_str}\n"
+        )
+
+    await message.answer("\n".join(lines))
 async def cmd_end_giveaway(message: Message):
     """Завершить конкурс досрочно (только админ)."""
     if not _admin_only(message):
@@ -292,7 +369,12 @@ async def cmd_giveaway_stat(message: Message):
     for user_id, slots, refs in rows[:30]:  # показываем топ 30
         chance = slots / total_slots * 100
         ref_str = f" (+{refs} реф.)" if refs > 0 else ""
-        lines.append(f"• <code>{user_id}</code>{ref_str} — {slots} шанс. ({chance:.1f}%)")
+        try:
+            user = await message.bot.get_chat(user_id)
+            name = f"@{user.username}" if user.username else esc(user.first_name or str(user_id))
+        except Exception:
+            name = str(user_id)
+        lines.append(f"• {name}{ref_str} — {slots} шанс. ({chance:.1f}%)")
 
     if len(participants) > 30:
         lines.append(f"\n<i>...и ещё {len(participants) - 30} участников</i>")

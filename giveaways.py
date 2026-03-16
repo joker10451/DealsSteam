@@ -82,6 +82,10 @@ async def init_giveaways_db():
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_giveaways_end_time ON giveaways(end_time)"
         )
+        # Миграция: добавляем reminder_sent если нет
+        await conn.execute(
+            "ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE"
+        )
     
     log.info("Таблицы конкурсов инициализированы")
 
@@ -170,10 +174,10 @@ async def join_giveaway(giveaway_id: str, user_id: int) -> tuple[bool, str]:
         bot = get_bot()
         try:
             member = await bot.get_chat_member(CHANNEL_ID, user_id)
-            if member.status not in ["member", "administrator", "creator"]:
+            if member.status in ["left", "kicked", "banned"]:
                 return False, "Нужно подписаться на канал для участия"
         except Exception as e:
-            log.warning(f"Не удалось проверить подписку user {user_id}: {e}")
+            log.warning(f"Не удалось проверить подписку user {user_id}: {e} — пропускаем проверку")
     
     # Добавляем участника
     try:
@@ -498,11 +502,95 @@ async def end_giveaway(giveaway_id: str) -> bool:
             await bot.send_message(CHANNEL_ID, announcement)
         
         log.info(f"Конкурс {giveaway_id} завершён, победитель: {winner_id}")
+
+        # Алерт админу
+        try:
+            from config import ADMIN_ID
+            if ADMIN_ID:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"✅ <b>Конкурс завершён!</b>\n\n"
+                    f"🎮 {esc(giveaway['title'])}\n"
+                    f"🏆 Победитель: {winner_mention}\n"
+                    f"👥 Участников: {participants_count}\n"
+                    f"📦 Приз отправлен: {'✅' if success else '❌ ' + msg}"
+                )
+        except Exception as e:
+            log.warning(f"Не удалось отправить алерт админу: {e}")
+
         return True
         
     except Exception as e:
         log.error(f"Ошибка объявления победителя: {e}")
         return False
+
+
+async def check_giveaway_reminders():
+    """Отправить напоминание в канал за 1 час до конца конкурса."""
+    from database import get_pool
+    from publisher import get_bot
+    from config import CHANNEL_ID
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    pool = await get_pool()
+    rows = await pool.fetch("""
+        SELECT * FROM giveaways
+        WHERE status = 'active'
+          AND end_time BETWEEN NOW() + INTERVAL '50 minutes' AND NOW() + INTERVAL '70 minutes'
+          AND reminder_sent = FALSE
+    """)
+
+    bot = get_bot()
+    for giveaway in rows:
+        try:
+            participants = await get_giveaway_participants(giveaway["giveaway_id"])
+            count = len(participants)
+            prize_emoji = {"steam_key": "🎮", "points": "⭐", "subscription": "👑"}.get(giveaway["prize_type"], "🎁")
+            text = (
+                f"⏰ <b>Последний час!</b>\n\n"
+                f"{prize_emoji} Розыгрыш <b>{esc(giveaway['title'])}</b> заканчивается через 1 час!\n\n"
+                f"👥 Участников: <b>{count}</b>\n\n"
+                f"Ещё не участвуешь? Жми кнопку! 👇"
+            )
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🎲 Участвовать",
+                    callback_data=f"giveaway_join:{giveaway['giveaway_id']}"
+                )]
+            ])
+            await bot.send_message(CHANNEL_ID, text, reply_markup=keyboard)
+            await pool.execute(
+                "UPDATE giveaways SET reminder_sent = TRUE WHERE giveaway_id = $1",
+                giveaway["giveaway_id"]
+            )
+            log.info(f"Напоминание отправлено для конкурса {giveaway['giveaway_id']}")
+        except Exception as e:
+            log.error(f"Ошибка напоминания для {giveaway['giveaway_id']}: {e}")
+
+
+async def delete_giveaway(giveaway_id: str) -> tuple[bool, str]:
+    """Удалить конкурс из БД и пост из канала."""
+    from database import get_pool
+    from publisher import get_bot
+    from config import CHANNEL_ID
+
+    pool = await get_pool()
+    giveaway = await pool.fetchrow("SELECT * FROM giveaways WHERE giveaway_id = $1", giveaway_id)
+
+    if not giveaway:
+        return False, "Конкурс не найден"
+
+    if giveaway["channel_post_id"]:
+        try:
+            bot = get_bot()
+            await bot.delete_message(CHANNEL_ID, giveaway["channel_post_id"])
+        except Exception as e:
+            log.warning(f"Не удалось удалить пост конкурса: {e}")
+
+    await pool.execute("DELETE FROM giveaway_participants WHERE giveaway_id = $1", giveaway_id)
+    await pool.execute("DELETE FROM giveaways WHERE giveaway_id = $1", giveaway_id)
+    log.info(f"Конкурс {giveaway_id} удалён")
+    return True, "Конкурс удалён"
 
 
 async def check_ended_giveaways():

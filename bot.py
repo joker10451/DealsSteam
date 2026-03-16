@@ -107,7 +107,9 @@ async def main():
         BotCommand(command="rewardstats", description="Статистика призов"),
         BotCommand(command="creategiveaway", description="Создать конкурс"),
         BotCommand(command="endgiveaway", description="Завершить конкурс"),
+        BotCommand(command="deletegiveaway", description="Удалить конкурс"),
         BotCommand(command="giveawaystat", description="Статистика участников конкурса"),
+        BotCommand(command="giveawayhistory", description="История конкурсов"),
         BotCommand(command="announce_referral", description="Разослать анонс реферальной программы"),
     ]
 
@@ -216,7 +218,7 @@ async def main():
     log.info("Очистка БД (GC): каждое воскресенье в 03:00 МСК")
 
     # Giveaway System Jobs
-    from giveaways import check_ended_giveaways
+    from giveaways import check_ended_giveaways, check_giveaway_reminders
     scheduler.add_job(
         check_ended_giveaways,
         "interval",
@@ -224,6 +226,14 @@ async def main():
         name="check_giveaways"
     )
     log.info("Проверка конкурсов: каждые 15 минут")
+
+    scheduler.add_job(
+        check_giveaway_reminders,
+        "interval",
+        minutes=15,
+        name="giveaway_reminders"
+    )
+    log.info("Напоминания о конкурсах: каждые 15 минут")
 
     if os.getenv("RENDER_EXTERNAL_URL"):
         scheduler.add_job(self_ping, "interval", minutes=10, name="self_ping")
