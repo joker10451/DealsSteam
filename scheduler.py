@@ -183,10 +183,10 @@ async def check_and_post() -> Optional[str]:
             prefetched_rating=rating_cache.get(deal.deal_id),
             is_priority=is_priority
         )
-        if published:
+        if published is not None:
             post_time = datetime.now(MSK).isoformat()
             await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount, deal.link)
-            await notify_wishlist_users(deal)
+            await notify_wishlist_users(deal, historical_low=published)
             await notify_genre_subscribers(deal)
             
             # Уведомляем подписчиков о бесплатных играх

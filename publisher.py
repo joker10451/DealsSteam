@@ -320,11 +320,11 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
             await asyncio.sleep(30)  # Подождём 30 секунд
             await publish_screenshot_game(deal, igdb_info)
         
-        return True
+        return historical_low  # возвращаем для переиспользования в notify_wishlist_users
     except Exception as e:
         log.error(f"Ошибка при отправке {deal.title}: {e}")
         await increment_metric("publish_error")
-        return False
+        return None
 
 
 async def notify_users(user_ids: list[int], deal, header: str):
@@ -361,11 +361,12 @@ async def notify_users(user_ids: list[int], deal, header: str):
         await asyncio.sleep(0.05)
 
 
-async def notify_wishlist_users(deal):
+async def notify_wishlist_users(deal, historical_low: Optional[dict] = None):
     """
     Notifies users who have the game in their wishlist.
     Respects per-user notification settings: min discount, quiet hours, grouping.
     Filters out users who own the game in their Steam library.
+    historical_low: передаётся из publish_single чтобы не делать повторный запрос к ITAD.
     """
     from database import steam_library_contains
 
@@ -432,9 +433,9 @@ async def notify_wishlist_users(deal):
             send_now.append(uid)
 
     if send_now:
-        # Проверяем исторический минимум для заголовка уведомления
-        hist_low = None
-        if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
+        # Используем переданный historical_low, иначе запрашиваем (fallback для прямых вызовов)
+        hist_low = historical_low
+        if hist_low is None and deal.store == "Steam" and deal.deal_id.startswith("steam_"):
             appid = deal.deal_id.replace("steam_", "")
             from enricher import get_historical_low
             hist_low = await get_historical_low(appid)
