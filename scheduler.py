@@ -19,11 +19,11 @@ from database import (
     get_all_genre_subscribers_for_deal,
 )
 from parsers.steam import get_steam_deals
-from parsers.gog import get_gog_deals
 from parsers.epic import get_epic_deals
 from enricher import get_steam_rating
 from igdb import get_game_info
 from hidden_gems import find_hidden_gems
+from smart_filter import should_publish_deal, generate_context_comment
 from publisher import (
     publish_single, notify_wishlist_users, notify_users,
     notify_admin, send_with_retry, get_daily_theme, esc, get_bot,
@@ -59,7 +59,6 @@ async def check_and_post() -> Optional[str]:
 
     for fetcher, name in [
         (get_steam_deals, "Steam"),
-        (get_gog_deals, "GOG"),
         (get_epic_deals, "Epic Games"),
     ]:
         try:
@@ -77,6 +76,7 @@ async def check_and_post() -> Optional[str]:
 
     filtered = []
     rating_cache: dict[str, Optional[dict]] = {}
+    igdb_cache: dict[str, Optional[dict]] = {}
     igdb_ids_seen: set[int] = set()
 
     for deal in all_deals:
@@ -98,14 +98,16 @@ async def check_and_post() -> Optional[str]:
             except (ValueError, AttributeError):
                 pass
 
-        if deal.store == "Steam" and MIN_STEAM_RATING > 0:
+        # Получаем рейтинг и IGDB данные
+        rating = None
+        if deal.store == "Steam":
             appid = deal.deal_id.replace("steam_", "")
             rating = await get_steam_rating(appid)
             rating_cache[deal.deal_id] = rating
-            if rating and rating["score"] < MIN_STEAM_RATING:
-                log.info(f"Пропущено (рейтинг {rating['score']}%): {deal.title}")
-                continue
+        
         igdb_info = await get_game_info(deal.title)
+        igdb_cache[deal.deal_id] = igdb_info
+        
         if igdb_info:
             igdb_id = igdb_info.get("igdb_id")
             if igdb_id:
@@ -116,6 +118,14 @@ async def check_and_post() -> Optional[str]:
             if FILTER_ADULT and igdb_info.get("is_adult"):
                 log.info(f"Пропущено (18+): {deal.title}")
                 continue
+        
+        # Умная фильтрация
+        should_publish, reason = await should_publish_deal(deal, rating, igdb_info)
+        
+        if not should_publish:
+            log.info(f"Отклонено умным фильтром ({reason}): {deal.title}")
+            continue
+        
         filtered.append(deal)
 
     if not filtered:
@@ -295,7 +305,6 @@ async def run_parser_tests():
     results = []
     for fetcher, name in [
         (get_steam_deals, "Steam"),
-        (get_gog_deals, "GOG"),
         (get_epic_deals, "Epic Games"),
     ]:
         try:
@@ -444,7 +453,7 @@ async def get_top_deals_now(limit: int = 5, user_id: int = None) -> list:
     from database import steam_library_filter_deals
     
     all_deals = []
-    for fetcher in [get_steam_deals, get_gog_deals, get_epic_deals]:
+    for fetcher in [get_steam_deals, get_epic_deals]:
         try:
             deals = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
             all_deals.extend(deals)

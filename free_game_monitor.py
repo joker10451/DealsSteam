@@ -1,6 +1,6 @@
 """
-Free game monitoring module.
-Tracks and notifies users about free game promotions on Epic Games and GOG.
+Мониторинг бесплатных игр.
+Отслеживает и уведомляет пользователей о бесплатных раздачах в Epic Games.
 """
 import logging
 from datetime import datetime
@@ -8,7 +8,6 @@ from html import escape
 from typing import Optional
 
 from parsers.epic import get_epic_deals
-from parsers.gog import get_gog_deals
 from parsers.steam import Deal
 from database import (
     is_already_posted, mark_as_posted,
@@ -74,51 +73,9 @@ async def check_epic_free_games():
 
 
 async def check_gog_free_games():
-    """
-    Checks GOG for free games.
-    Publishes new free games to channel and notifies subscribers.
-    Runs every 6 hours via scheduler.
-    
-    Requirements: 4.2, 4.3, 4.5
-    """
-    log.info("Checking GOG for free games...")
-    
-    try:
-        # Get free games (100% discount)
-        deals = await get_gog_deals(min_discount=100)
-        
-        if not deals:
-            log.info("No free games found on GOG")
-            return
-        
-        log.info(f"Found {len(deals)} free games on GOG")
-        
-        # Process each free game
-        for deal in deals:
-            # Check if already posted
-            if await is_already_posted(deal.deal_id):
-                log.debug(f"Free game already posted: {deal.title}")
-                continue
-            
-            # GOG doesn't provide expiration dates in the same way
-            expiration_date = None
-            
-            # Publish to channel and notify subscribers
-            await publish_free_game(deal, expiration_date)
-            
-            # Mark as posted to prevent duplicates
-            await mark_as_posted(
-                deal.deal_id,
-                deal.title,
-                deal.store,
-                deal.discount,
-                deal.link
-            )
-            
-            log.info(f"Published free game: {deal.title} from {deal.store}")
-    
-    except Exception as e:
-        log.error(f"Error checking GOG free games: {e}", exc_info=True)
+    """Заглушка — GOG удалён из проекта."""
+    log.info("GOG мониторинг отключён.")
+    return
 
 
 def _parse_epic_expiration(deal: Deal) -> Optional[str]:

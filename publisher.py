@@ -215,8 +215,9 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     if igdb_info and igdb_info.get("description"):
         lines.append(f"\n📖 <i>{esc(igdb_info['description'])}</i>")
 
-    # Комментарий бота
-    comment = generate_comment(deal, rating)
+    # Комментарий бота (с контекстом для старых/неизвестных игр)
+    from smart_filter import generate_context_comment
+    comment = generate_context_comment(deal, rating, igdb_info)
     lines.append(f"\n💬 <i>{esc(comment)}</i>")
 
     # Хештеги
@@ -257,15 +258,9 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{_cb_id(deal.deal_id)}"),
         InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"),
     ]
-    # Кнопка "Поделиться" — открывает inline-поиск с названием игры в любом чате
-    share_button = InlineKeyboardButton(
-        text="🔗 Поделиться скидкой",
-        switch_inline_query=deal.title[:50],
-    )
     rows = [
         [InlineKeyboardButton(text=f"🛒 Открыть в {deal.store}", url=_utm_link(deal.link, deal.store))],
         vote_row,
-        [share_button],
     ]
     if price_game_button:
         rows.append([price_game_button])

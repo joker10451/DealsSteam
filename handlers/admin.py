@@ -367,7 +367,7 @@ async def cmd_test_post(message: Message):
 
     status_msg = await message.answer("🔄 Собираю скидки для теста...")
 
-    from scheduler import get_steam_deals, get_gog_deals, get_epic_deals, MIN_DISCOUNT_PERCENT, FILTER_BUNDLES, is_already_posted
+    from scheduler import get_steam_deals, get_epic_deals, MIN_DISCOUNT_PERCENT, FILTER_BUNDLES, is_already_posted
     from publisher import get_bot
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     import random
@@ -375,7 +375,7 @@ async def cmd_test_post(message: Message):
     try:
         all_deals = []
         debug_lines = []
-        for fetcher in [get_steam_deals, get_gog_deals, get_epic_deals]:
+        for fetcher in [get_steam_deals, get_epic_deals]:
             name = fetcher.__name__
             try:
                 fetched = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
