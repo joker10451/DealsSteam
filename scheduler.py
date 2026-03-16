@@ -35,6 +35,9 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 log = logging.getLogger(__name__)
 MSK = pytz.timezone("Europe/Moscow")
 
+# Блокировка от параллельного запуска check_and_post
+_post_lock = asyncio.Lock()
+
 
 def deduplicate(deals: list) -> list:
     seen: dict[str, object] = {}
@@ -53,6 +56,14 @@ def theme_score(deal, theme_genres: list[str]) -> int:
 
 async def check_and_post() -> Optional[str]:
     """Собирает скидки и публикует лучшую. Возвращает время публикации или None."""
+    if _post_lock.locked():
+        log.warning("check_and_post уже выполняется, пропускаем")
+        return None
+    async with _post_lock:
+        return await _check_and_post_impl()
+
+
+async def _check_and_post_impl() -> Optional[str]:
     log.info("Запуск сбора скидок...")
     all_deals = []
     errors = []
