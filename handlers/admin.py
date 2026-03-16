@@ -585,3 +585,26 @@ async def cmd_reward_stats(message: Message):
         lines.append(f"Куплено: {purchases}, Выдано: {claimed}\n")
 
     await message.answer("\n".join(lines))
+
+@router.message(Command("announce_referral"))
+async def cmd_announce_referral(message: Message):
+    """Разослать анонс реферальной программы всем пользователям (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    bot_info = await message.bot.get_me()
+    await message.answer("📢 Начинаю рассылку... Это может занять несколько минут.")
+
+    from referral import broadcast_referral_announcement
+    result = await broadcast_referral_announcement(bot_info.username)
+
+    if "error" in result:
+        await message.answer(f"❌ Ошибка: {esc(result['error'])}")
+        return
+
+    await message.answer(
+        f"✅ <b>Рассылка завершена</b>\n\n"
+        f"Отправлено: <b>{result['sent']}</b>\n"
+        f"Ошибок: <b>{result['failed']}</b>"
+    )

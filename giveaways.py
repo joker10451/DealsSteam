@@ -222,29 +222,41 @@ async def get_giveaway_participants(giveaway_id: str) -> list[int]:
 async def select_winner(giveaway_id: str) -> Optional[int]:
     """
     Выбрать случайного победителя из участников.
-    
+    Участники, пригласившие друзей, получают дополнительные шансы:
+    1 базовый шанс + 1 за каждого приглашённого реферала.
+
     Returns:
         user_id победителя или None если нет участников
     """
     from database import get_pool
-    
+
     participants = await get_giveaway_participants(giveaway_id)
-    
+
     if not participants:
         log.warning(f"Нет участников в конкурсе {giveaway_id}")
         return None
-    
-    winner_id = random.choice(participants)
-    
-    # Сохраняем победителя
+
+    # Строим взвешенный список: каждый участник + по 1 слоту за каждого реферала
     pool = await get_pool()
+    weighted: list[int] = []
+    for user_id in participants:
+        referral_count = await pool.fetchval(
+            "SELECT COUNT(*) FROM referrals WHERE referrer_id = $1", user_id
+        ) or 0
+        # 1 базовый шанс + бонусные за рефералов
+        slots = 1 + int(referral_count)
+        weighted.extend([user_id] * slots)
+
+    winner_id = random.choice(weighted)
+
+    # Сохраняем победителя
     await pool.execute("""
         UPDATE giveaways
         SET winner_user_id = $2, status = 'ended'
         WHERE giveaway_id = $1
     """, giveaway_id, winner_id)
-    
-    log.info(f"Победитель конкурса {giveaway_id}: user {winner_id}")
+
+    log.info(f"Победитель конкурса {giveaway_id}: user {winner_id} (пул: {len(weighted)} слотов)")
     return winner_id
 
 
@@ -308,22 +320,31 @@ async def award_prize(giveaway_id: str, winner_id: int) -> tuple[bool, str]:
             return True, f"Начислено {points} баллов"
             
         elif prize_type == "subscription":
-            # Выдаём подписку/приз из магазина
-            from rewards import purchase_reward
-            success = await purchase_reward(winner_id, prize_value, cost=0)
-            
-            if success:
-                from publisher import get_bot
-                bot = get_bot()
-                await bot.send_message(
-                    winner_id,
-                    f"🎉 <b>Поздравляем!</b>\n\n"
-                    f"Ты выиграл приз в конкурсе!\n"
-                    f"Проверь /myrewards"
+            # Выдаём подписку/приз из магазина напрямую, без списания баллов
+            from database import get_pool as _get_pool
+            from datetime import timedelta
+            _pool = await _get_pool()
+            async with _pool.acquire() as _conn:
+                reward_row = await _conn.fetchrow(
+                    "SELECT * FROM user_rewards WHERE user_id = $1 AND reward_id = $2",
+                    winner_id, prize_value
                 )
-                return True, "Приз выдан"
-            else:
-                return False, "Ошибка выдачи приза"
+                if not reward_row:
+                    await _conn.execute("""
+                        INSERT INTO user_rewards (user_id, reward_id, is_active)
+                        VALUES ($1, $2, TRUE)
+                        ON CONFLICT DO NOTHING
+                    """, winner_id, prize_value)
+
+            from publisher import get_bot
+            bot = get_bot()
+            await bot.send_message(
+                winner_id,
+                f"🎉 <b>Поздравляем!</b>\n\n"
+                f"Ты выиграл приз в конкурсе!\n"
+                f"Проверь /myrewards"
+            )
+            return True, "Приз выдан"
         
         else:
             return False, f"Неизвестный тип приза: {prize_type}"
@@ -370,6 +391,9 @@ async def publish_giveaway(giveaway_id: str) -> Optional[int]:
         f"{esc(giveaway['description'])}\n\n"
         f"📅 Розыгрыш: <b>{end_str}</b>\n"
         f"👥 Участников: <b>0</b>\n\n"
+        f"🎲 <b>Больше друзей = больше шансов!</b>\n"
+        f"За каждого приглашённого друга ты получаешь +1 дополнительный шанс на победу.\n"
+        f"Своя ссылка — в боте: /invite\n\n"
         f"<i>Нажми кнопку ниже для участия!</i>"
     )
     

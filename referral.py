@@ -101,10 +101,10 @@ async def register_referral(referrer_id: int, referee_id: int) -> dict:
         if onboarding is not None:
             return {"error": "Реферальная ссылка работает только для новых пользователей"}
         
-        # Регистрируем реферала
+        # Регистрируем реферала и сразу помечаем бонус как выплаченный
         await conn.execute("""
-            INSERT INTO referrals (referrer_id, referee_id)
-            VALUES ($1, $2)
+            INSERT INTO referrals (referrer_id, referee_id, bonus_paid)
+            VALUES ($1, $2, TRUE)
         """, referrer_id, referee_id)
         
         # Начисляем бонусы рефереру
@@ -124,17 +124,24 @@ async def register_referral(referrer_id: int, referee_id: int) -> dict:
         """, referee_id, REFEREE_BONUS)
         
         log.info(f"Реферал зарегистрирован: {referrer_id} пригласил {referee_id}")
-    
-    # Отправляем уведомление рефереру
+
+        # Читаем новый баланс реферера в том же соединении
+        new_balance = await conn.fetchval(
+            "SELECT total_score FROM user_scores WHERE user_id = $1", referrer_id
+        ) or REFERRER_BONUS
+
+    # Отправляем уведомление рефереру с актуальным балансом
     try:
         from publisher import get_bot
         bot = get_bot()
         if bot:
             await bot.send_message(
                 referrer_id,
-                f"🎉 <b>Твой друг присоединился!</b>\n\n"
-                f"Ты получил <b>+{REFERRER_BONUS}</b> баллов за приглашение.\n\n"
-                f"Продолжай приглашать друзей: /invite"
+                f"✅ <b>Твой друг подписался!</b>\n\n"
+                f"Тебе начислено <b>+{REFERRER_BONUS}</b> баллов.\n"
+                f"Твой баланс: <b>{new_balance}</b> ⭐\n\n"
+                f"Продолжай приглашать друзей: /invite",
+                parse_mode="HTML",
             )
     except Exception as e:
         log.warning(f"Не удалось отправить уведомление рефереру {referrer_id}: {e}")
@@ -242,3 +249,52 @@ async def check_and_apply_referral(user_id: int, start_param: Optional[str]) -> 
     
     result = await register_referral(referrer_id, user_id)
     return result
+
+
+async def broadcast_referral_announcement(bot_username: str) -> dict:
+    """
+    Рассылает анонс реферальной программы всем активным пользователям.
+    Возвращает статистику: sent, failed.
+    """
+    import asyncio
+    from publisher import get_bot
+    from database import get_pool
+
+    bot = get_bot()
+    if not bot:
+        return {"error": "Бот не инициализирован"}
+
+    pool = await get_pool()
+    users = await pool.fetch("""
+        SELECT user_id FROM user_scores ORDER BY total_score DESC
+    """)
+
+    sent = 0
+    failed = 0
+
+    for row in users:
+        user_id = row["user_id"]
+        link = get_referral_link(user_id, bot_username)
+        text = (
+            "🔥 <b>Новая фича: Зарабатывай баллы за друзей!</b>\n\n"
+            "У тебя есть личная реферальная ссылка.\n\n"
+            "<b>Как это работает:</b>\n"
+            "1. Скопируй свою ссылку ниже\n"
+            "2. Отправь другу\n"
+            "3. Друг получает <b>+50 баллов</b> на старт\n"
+            "4. Ты получаешь <b>+100 баллов</b> за каждого!\n\n"
+            "🎲 <b>Бонус для розыгрышей:</b> каждый приглашённый друг даёт тебе "
+            "+1 дополнительный шанс на победу в конкурсах!\n\n"
+            "Накопил баллы? Меняй на Steam-ключи в /shop\n\n"
+            f"<b>Твоя ссылка:</b>\n<code>{link}</code>"
+        )
+        try:
+            await bot.send_message(user_id, text, parse_mode="HTML")
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            log.warning(f"Не удалось отправить анонс пользователю {user_id}: {e}")
+            failed += 1
+
+    log.info(f"Рассылка реферального анонса: отправлено {sent}, ошибок {failed}")
+    return {"sent": sent, "failed": failed}

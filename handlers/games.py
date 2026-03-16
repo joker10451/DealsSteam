@@ -318,7 +318,7 @@ async def handle_price_game_answer(callback: CallbackQuery):
     if chosen == correct:
         points = 20
         await add_score(user_id, points, correct=True, reason="price_game", username=username)
-        new_achievements = await check_and_unlock_achievements(user_id, username)
+        new_achievements = await check_and_unlock_achievements(user_id)
         score_data = await get_user_score(user_id)
         balance = score_data.get("total_score", 0)
 

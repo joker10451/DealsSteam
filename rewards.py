@@ -236,6 +236,15 @@ async def purchase_reward(user_id: int, reward_id: str) -> dict:
             if locked_balance is None or locked_balance < cost:
                 return {"error": f"Недостаточно баллов. Нужно: {cost}, у тебя: {locked_balance or 0}"}
 
+            # Повторная проверка дубля permanent внутри транзакции
+            if reward["type"] == "permanent":
+                existing = await conn.fetchval("""
+                    SELECT 1 FROM user_rewards
+                    WHERE user_id = $1 AND reward_id = $2
+                """, user_id, reward_id)
+                if existing:
+                    return {"error": "Ты уже купил этот приз!"}
+
             await conn.execute("""
                 UPDATE user_scores SET total_score = total_score - $2 WHERE user_id = $1
             """, user_id, cost)
@@ -255,7 +264,7 @@ async def purchase_reward(user_id: int, reward_id: str) -> dict:
         "success": True,
         "reward": reward,
         "cost": cost,
-        "new_balance": balance - cost,
+        "new_balance": locked_balance - cost,
     }
 
 

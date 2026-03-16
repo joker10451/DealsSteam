@@ -170,11 +170,8 @@ async def callback_giveaway_join(callback: CallbackQuery):
     user_id = callback.from_user.id
     
     from giveaways import join_giveaway
-    from database import get_pool, create_onboarding_progress
-    
-    # Создаём запись пользователя если её нет
-    await create_onboarding_progress(user_id)
-    
+    from database import get_pool
+
     success, msg = await join_giveaway(giveaway_id, user_id)
     
     if success:
@@ -207,6 +204,9 @@ async def callback_giveaway_join(callback: CallbackQuery):
                     f"{esc(giveaway['description'])}\n\n"
                     f"📅 Розыгрыш: <b>{end_str}</b>\n"
                     f"👥 Участников: <b>{count}</b>\n\n"
+                    f"🎲 <b>Больше друзей = больше шансов!</b>\n"
+                    f"За каждого приглашённого друга ты получаешь +1 дополнительный шанс на победу.\n"
+                    f"Своя ссылка — в боте: /invite\n\n"
                     f"<i>Нажми кнопку ниже для участия!</i>"
                 )
                 

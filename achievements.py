@@ -228,29 +228,31 @@ async def check_and_unlock_achievements(user_id: int) -> List[dict]:
             
             try:
                 if _check(achievement_id, context):
-                    # Разблокируем достижение
-                    await conn.execute("""
-                        INSERT INTO user_achievements (user_id, achievement_id)
-                        VALUES ($1, $2)
-                        ON CONFLICT DO NOTHING
-                    """, user_id, achievement_id)
-                    
-                    # Начисляем бонусные баллы
                     reward = achievement['reward_points']
-                    await conn.execute("""
-                        UPDATE user_scores
-                        SET total_score = total_score + $2
-                        WHERE user_id = $1
-                    """, user_id, reward)
-                    
-                    newly_unlocked.append({
-                        'id': achievement_id,
-                        'name': achievement['name'],
-                        'description': achievement['description'],
-                        'reward': reward,
-                    })
-                    
-                    log.info(f"Пользователь {user_id} разблокировал достижение: {achievement['name']}")
+                    # Атомарно: вставляем достижение и начисляем баллы только если вставка прошла
+                    async with conn.transaction():
+                        result = await conn.execute("""
+                            INSERT INTO user_achievements (user_id, achievement_id)
+                            VALUES ($1, $2)
+                            ON CONFLICT DO NOTHING
+                        """, user_id, achievement_id)
+                        
+                        # Начисляем баллы только если достижение действительно новое
+                        if result == "INSERT 1":
+                            await conn.execute("""
+                                UPDATE user_scores
+                                SET total_score = total_score + $2
+                                WHERE user_id = $1
+                            """, user_id, reward)
+                            
+                            newly_unlocked.append({
+                                'id': achievement_id,
+                                'name': achievement['name'],
+                                'description': achievement['description'],
+                                'reward': reward,
+                            })
+                            
+                            log.info(f"Пользователь {user_id} разблокировал достижение: {achievement['name']}")
             except Exception as e:
                 log.warning(f"Ошибка при проверке достижения {achievement_id}: {e}")
         

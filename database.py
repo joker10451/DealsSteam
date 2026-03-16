@@ -568,21 +568,23 @@ async def get_shown_hints(user_id: int) -> list[str]:
 async def get_user_registration_date(user_id: int):
     """
     Получить дату регистрации пользователя.
-    
-    Args:
-        user_id: Telegram user ID
-        
+    Берёт наиболее раннюю дату из onboarding_progress и user_scores,
+    чтобы корректно определять возраст аккаунта независимо от пути входа.
+
     Returns:
-        datetime object with registration date (created_at from onboarding_progress),
-        or None if user not found
+        datetime object или None если пользователь не найден ни в одной таблице
     """
     try:
         pool = await get_pool()
-        row = await pool.fetchrow(
-            "SELECT created_at FROM onboarding_progress WHERE user_id = $1",
-            user_id,
-        )
-        return row["created_at"] if row else None
+        row = await pool.fetchrow("""
+            SELECT LEAST(
+                MIN(op.created_at),
+                MIN(us.created_at)
+            ) AS earliest
+            FROM (SELECT created_at FROM onboarding_progress WHERE user_id = $1) op
+            FULL OUTER JOIN (SELECT created_at FROM user_scores WHERE user_id = $1) us ON TRUE
+        """, user_id)
+        return row["earliest"] if row else None
     except Exception as e:
         import logging
         log = logging.getLogger(__name__)
@@ -1427,6 +1429,7 @@ async def engagement_event(deal_id: str, event: str):
         return
     pool = await get_pool()
     # Только обновляем — запись должна уже существовать после impression
+    # col берётся из whitelist-словаря выше, интерполяция безопасна
     await pool.execute(f"""
         UPDATE deal_engagement
         SET {col} = {col} + 1, last_event = NOW()

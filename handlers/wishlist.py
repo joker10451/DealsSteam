@@ -9,7 +9,6 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
 )
 
-from config import ADMIN_ID
 from database import (
     wishlist_add, wishlist_remove, wishlist_list,
     genre_subscribe, genre_unsubscribe, genre_list,
@@ -59,60 +58,6 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
     )
 
-
-@router.message(Command("start"))
-async def cmd_start(message: Message):
-    user_id = message.from_user.id
-    
-    # Проверяем реферальный код
-    start_param = None
-    if message.text and len(message.text.split()) > 1:
-        start_param = message.text.split()[1]
-    
-    # Обрабатываем реферальную ссылку
-    referral_bonus_text = ""
-    if start_param:
-        from referral import check_and_apply_referral
-        result = await check_and_apply_referral(user_id, start_param)
-        
-        if result and "success" in result:
-            referral_bonus_text = (
-                f"\n\n🎉 <b>Бонус за приглашение!</b>\n"
-                f"Ты получил <b>+{result['referee_bonus']}</b> баллов\n"
-                f"Твой друг получил <b>+{result['referrer_bonus']}</b> баллов\n"
-            )
-    
-    await message.answer(
-        "👋 Привет! Я слежу за скидками на игры.\n\n"
-        "<b>Что я умею:</b>\n"
-        "• Напиши название игры — добавлю в вишлист и уведомлю при скидке\n"
-        "• Играй в мини-игры и зарабатывай баллы\n"
-        "• Обменивай баллы на Steam ключи и призы\n"
-        "• Ловлю ошибки цен и бесплатные игры\n\n"
-        "<b>Основные команды:</b>\n"
-        "/wishlist — посмотреть вишлист\n"
-        "/free — подписаться на бесплатные игры\n"
-        "/games — мини-игры\n"
-        "/shop — магазин призов\n"
-        "/settings — настройки уведомлений\n"
-        "/invite — пригласи друга и получи 100 баллов\n"
-        "/profile — мой профиль\n\n"
-        "<b>Дополнительно:</b>\n"
-        "/top — топ скидок прямо сейчас\n"
-        "/price [ссылка] — цены по регионам\n"
-        "/find [тег] — найти по жанру\n"
-        "/genre [жанр] — подписаться на жанр\n"
-        + referral_bonus_text
-        + (
-            "\n<b>Админ:</b>\n"
-            "/post — опубликовать скидки\n"
-            "/gems — скрытые жемчужины\n"
-            "/digest — дайджест недели\n"
-            "/stats — метрики"
-            if message.from_user.id == ADMIN_ID else ""
-        ),
-        reply_markup=main_keyboard(),
-    )
 
 
 @router.message(Command("wishlist"))

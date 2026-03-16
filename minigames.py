@@ -350,7 +350,7 @@ async def complete_daily_challenge(user_id: int) -> dict:
             return {"error": "Ты уже выполнил челлендж сегодня!"}
     
     # Начисляем бонусные баллы и проверяем достижения
-    new_achievements = await add_score(user_id, 50, True, reason="challenge")
+    new_achievements = await add_score(user_id, 50, True, reason="challenge") or []
     
     # Увеличиваем счётчик выполненных челленджей
     from achievements import increment_challenges_completed, check_and_unlock_achievements
