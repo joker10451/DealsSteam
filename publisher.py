@@ -320,11 +320,12 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
             await asyncio.sleep(30)  # Подождём 30 секунд
             await publish_screenshot_game(deal, igdb_info)
         
-        return historical_low  # возвращаем для переиспользования в notify_wishlist_users
+        # Возвращаем кортеж (успех, historical_low) для переиспользования в notify_wishlist_users
+        return (True, historical_low)
     except Exception as e:
         log.error(f"Ошибка при отправке {deal.title}: {e}")
         await increment_metric("publish_error")
-        return None
+        return (False, None)
 
 
 async def notify_users(user_ids: list[int], deal, header: str):

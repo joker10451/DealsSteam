@@ -178,15 +178,16 @@ async def check_and_post() -> Optional[str]:
 
     for deal in combined[:5]:  # пробуем до 5 кандидатов
         is_priority = deal in glitches or deal.is_free
-        published = await publish_single(
+        result = await publish_single(
             deal,
             prefetched_rating=rating_cache.get(deal.deal_id),
             is_priority=is_priority
         )
-        if published is not None:
+        ok, historical_low = result if result else (False, None)
+        if ok:
             post_time = datetime.now(MSK).isoformat()
             await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount, deal.link)
-            await notify_wishlist_users(deal, historical_low=published)
+            await notify_wishlist_users(deal, historical_low=historical_low)
             await notify_genre_subscribers(deal)
             
             # Уведомляем подписчиков о бесплатных играх
