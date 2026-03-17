@@ -95,6 +95,9 @@ async def db_cleanup():
         "DELETE FROM votes WHERE deal_id LIKE $1", f"{TEST_PREFIX}%"
     )
     await pool.execute(
+        "DELETE FROM votes WHERE user_id >= 9000000000"
+    )
+    await pool.execute(
         "DELETE FROM posted_deals WHERE deal_id LIKE $1", f"{TEST_PREFIX}%"
     )
     # Для wishlist используем user_id в диапазоне тестовых значений

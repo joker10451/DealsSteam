@@ -860,11 +860,35 @@ async def cmd_kick_giveaway(message: Message):
         return
 
     giveaway_id = args[1].strip()
+    user_arg = args[2].strip().lstrip("@")
+
+    # Пробуем как числовой ID
+    user_id = None
     try:
-        user_id = int(args[2].strip())
+        user_id = int(user_arg)
     except ValueError:
-        await message.answer("❌ Неверный user_id")
-        return
+        # Username — ищем среди ВСЕХ участников (включая is_eligible=FALSE)
+        from database import get_pool as _get_pool
+        _pool = await _get_pool()
+        all_participants = await _pool.fetch(
+            "SELECT user_id FROM giveaway_participants WHERE giveaway_id = $1",
+            giveaway_id,
+        )
+        for row in all_participants:
+            pid = row["user_id"]
+            try:
+                user = await message.bot.get_chat(pid)
+                if user.username and user.username.lower() == user_arg.lower():
+                    user_id = pid
+                    break
+            except Exception:
+                continue
+        if not user_id:
+            await message.answer(
+                f"⚠️ @{esc(user_arg)} не найден среди участников.\n\n"
+                f"Список: /giveawaystat <code>{esc(giveaway_id)}</code>"
+            )
+            return
 
     from database import get_pool
     pool = await get_pool()
@@ -1040,14 +1064,9 @@ async def cmd_test_vk(message: Message):
             f"{'⭐ Рейтинг: ' + str(rating['score']) + '%' if has_rating else '⚠️ Рейтинг: нет'}"
         )
     else:
-        # Показываем точную ошибку от VK для диагностики
-        from vk_publisher import _vk_request_debug
-        debug = await _vk_request_debug("wall.post", {
-            "owner_id": -VK_GROUP_ID,
-            "from_group": 1,
-            "message": f"тест {deal.title}",
-        })
+        # post_deal_to_vk вернул False — детали уже залогированы в vk_publisher
         await status_msg.edit_text(
-            f"❌ Ошибка публикации в ВК.\n\n"
-            f"Ответ VK API:\n<code>{esc(str(debug))}</code>"
+            "❌ Ошибка публикации в ВК.\n\n"
+            "Проверь логи бота — там будет точная причина от VK API.\n"
+            "Убедись что VK_ACCESS_TOKEN и VK_GROUP_ID заданы верно."
         )

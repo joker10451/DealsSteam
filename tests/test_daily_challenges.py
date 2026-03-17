@@ -139,14 +139,14 @@ async def test_check_challenge_progress_vote_games(db_cleanup):
     from minigames import create_daily_challenge
     await create_daily_challenge("vote_games", {"required_votes": 5})
     
-    # Добавляем голоса
+    # Добавляем голоса (используем test_pytest_ префикс для корректной очистки db_cleanup)
     pool = await get_pool()
     async with pool.acquire() as conn:
         for i in range(3):
             await conn.execute("""
                 INSERT INTO votes (user_id, deal_id, vote)
                 VALUES ($1, $2, 'fire')
-            """, user_id, f"test_{i}")
+            """, user_id, f"test_pytest_{i}")
     
     # Проверяем прогресс
     progress = await check_challenge_progress(user_id)

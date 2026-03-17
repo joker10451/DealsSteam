@@ -195,9 +195,17 @@ async def post_deal_to_vk(deal, rating: Optional[dict] = None, igdb_info: Option
             params["attachments"] = link_attachment
 
         result = await _vk_request("wall.post", params)
-        if result and result.get("post_id"):
-            log.info(f"VK: опубликован пост {result['post_id']} для {deal.title}")
+        log.debug(f"VK wall.post result: {result}")
+        # result может быть dict {'post_id': N} или int (в старых версиях API)
+        post_id = None
+        if isinstance(result, dict):
+            post_id = result.get("post_id")
+        elif isinstance(result, int):
+            post_id = result
+        if post_id:
+            log.info(f"VK: опубликован пост {post_id} для {deal.title}")
             return True
+        log.error(f"VK: wall.post не вернул post_id, result={result}")
         return False
 
     except Exception as e:
@@ -228,9 +236,11 @@ async def post_giveaway_to_vk(title: str, description: str, end_str: str, channe
             "from_group": 1,
             "message": text,
         })
-        if result and result.get("post_id"):
-            log.info(f"VK: опубликован розыгрыш {result['post_id']}")
+        post_id = result.get("post_id") if isinstance(result, dict) else result if isinstance(result, int) else None
+        if post_id:
+            log.info(f"VK: опубликован розыгрыш {post_id}")
             return True
+        log.error(f"VK: giveaway wall.post не вернул post_id, result={result}")
         return False
 
     except Exception as e:
