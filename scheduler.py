@@ -205,6 +205,13 @@ async def _check_and_post_impl() -> Optional[str]:
             # Уведомляем подписчиков о бесплатных играх
             if deal.is_free:
                 await notify_free_game_subscribers(deal)
+
+            # Дублируем в ВК
+            try:
+                from vk_publisher import post_deal_to_vk
+                await post_deal_to_vk(deal, rating_cache.get(deal.deal_id))
+            except Exception as e:
+                log.warning(f"VK публикация не удалась: {e}")
             
             # Мини-игра теперь встроена в пост (кнопка pg_start:)
             deleted = await cleanup_old_records()

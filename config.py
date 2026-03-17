@@ -49,3 +49,9 @@ ITAD_API_KEY = os.getenv("ITAD_API_KEY", "")
 
 # Username бота без @ (нужен для реферальных ссылок в постах канала)
 BOT_USERNAME = os.getenv("BOT_USERNAME", "")
+
+# VK Integration
+VK_ACCESS_TOKEN = os.getenv("VK_ACCESS_TOKEN", "")
+VK_GROUP_ID = int(os.getenv("VK_GROUP_ID", "0"))
+VK_ENABLED = os.getenv("VK_ENABLED", "false").lower() == "true"
+TG_CHANNEL_LINK = os.getenv("TG_CHANNEL_LINK", "https://t.me/GameDealsRadarRu")
