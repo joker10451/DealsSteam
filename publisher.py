@@ -316,10 +316,22 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         # Случайно публикуем игру со скриншотом (20% шанс)
         import random
         if random.random() < 0.2 and igdb_info and igdb_info.get("screenshots"):
-            await asyncio.sleep(30)  # Подождём 30 секунд
+            await asyncio.sleep(30)
             await publish_screenshot_game(deal, igdb_info)
-        
-        # Возвращаем кортеж (успех, historical_low) для переиспользования в notify_wishlist_users
+
+        # Контекстный совет (30% шанс при совпадении темы)
+        from tips import get_contextual_tip
+        ctx_tip = await get_contextual_tip(deal)
+        if ctx_tip:
+            await asyncio.sleep(5)
+            try:
+                await send_with_retry(lambda: get_bot().send_message(
+                    CHANNEL_ID, ctx_tip, disable_web_page_preview=True
+                ))
+                log.info(f"Контекстный совет опубликован для: {deal.title}")
+            except Exception as e:
+                log.warning(f"Не удалось отправить контекстный совет: {e}")
+
         return (True, historical_low)
     except Exception as e:
         log.error(f"Ошибка при отправке {deal.title}: {e}")
