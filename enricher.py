@@ -29,6 +29,7 @@ def _cache_set(key: str, value, ttl: int = _CACHE_TTL):
 # --- Steam рейтинг ---
 
 STEAM_APPDETAILS_URL = "https://store.steampowered.com/appreviews/{appid}?json=1&language=all&purchase_type=all"
+STEAM_APPDETAILS_RU_URL = "https://store.steampowered.com/api/appdetails?appids={appid}&cc=ru&l=russian&filters=short_description"
 
 RATING_LABELS = {
     (95, 101): ("🏆 Крайне положительные", 95),
@@ -72,7 +73,33 @@ async def get_steam_rating(appid: str) -> Optional[dict]:
         return None
 
 
-# --- Исторический минимум через IsThereAnyDeal ---
+# --- Steam описание на русском ---
+
+async def get_steam_description(appid: str) -> Optional[str]:
+    """Возвращает короткое описание игры на русском из Steam Store API."""
+    cached = _cache_get(f"desc:{appid}")
+    if cached is not None:
+        return cached
+
+    url = STEAM_APPDETAILS_RU_URL.format(appid=appid)
+    try:
+        from parsers.utils import fetch_with_retry
+        data = await fetch_with_retry(url)
+        if not data:
+            return None
+        app_data = data.get(str(appid), {})
+        if not app_data.get("success"):
+            return None
+        desc = app_data.get("data", {}).get("short_description", "")
+        if not desc:
+            return None
+        # Обрезаем до разумной длины
+        if len(desc) > 300:
+            desc = desc[:297] + "..."
+        _cache_set(f"desc:{appid}", desc, ttl=24 * 3600)
+        return desc
+    except Exception:
+        return None
 
 ITAD_LOOKUP_URL = "https://api.isthereanydeal.com/games/lookup/v1"
 ITAD_PRICES_URL = "https://api.isthereanydeal.com/games/prices/v3"

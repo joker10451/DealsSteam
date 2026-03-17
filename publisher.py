@@ -19,7 +19,7 @@ from database import (
     notif_settings_get, notif_queue_add,
     engagement_impression, engagement_event,
 )
-from enricher import get_steam_rating, get_historical_low, generate_comment, genres_to_hashtags
+from enricher import get_steam_rating, get_historical_low, get_steam_description, generate_comment, genres_to_hashtags
 from igdb import get_game_info
 from collage import make_collage
 from currency import to_rubles, format_rub
@@ -124,18 +124,21 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
         appid = deal.deal_id.replace("steam_", "")
         if rating is None:
-            rating, historical_low, igdb_info = await asyncio.gather(
+            rating, historical_low, igdb_info, steam_desc = await asyncio.gather(
                 get_steam_rating(appid),
                 get_historical_low(appid),
                 get_game_info(deal.title),
+                get_steam_description(appid),
             )
         else:
-            historical_low, igdb_info = await asyncio.gather(
+            historical_low, igdb_info, steam_desc = await asyncio.gather(
                 get_historical_low(appid),
                 get_game_info(deal.title),
+                get_steam_description(appid),
             )
     else:
         igdb_info = await get_game_info(deal.title)
+        steam_desc = None
 
     # Используем флаг is_current_low из ITAD если доступен, иначе fallback по скидке
     is_current_low = bool(historical_low and historical_low.get("is_current_low"))
@@ -212,9 +215,10 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         glitch_alert = format_glitch_alert(deal, glitch_info)
         lines.append(f"\n{glitch_alert}")
 
-    # Описание игры
-    if igdb_info and igdb_info.get("description"):
-        lines.append(f"\n📖 <i>{esc(igdb_info['description'])}</i>")
+    # Описание игры: Steam (русское) → IGDB (с переводом) → ничего
+    description = steam_desc or (igdb_info.get("description") if igdb_info else None)
+    if description:
+        lines.append(f"\n📖 <i>{esc(description)}</i>")
 
     # Комментарий бота (с контекстом для старых/неизвестных игр)
     from smart_filter import generate_context_comment
