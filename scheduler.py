@@ -198,7 +198,7 @@ async def _check_and_post_impl() -> Optional[str]:
         )
         if ok:
             post_time = datetime.now(MSK).isoformat()
-            await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount, deal.link)
+            await mark_as_posted(deal.deal_id, deal.title, deal.store, deal.discount, deal.link, deal.old_price, deal.new_price)
             await notify_wishlist_users(deal, historical_low=historical_low)
             await notify_genre_subscribers(deal)
             
@@ -206,10 +206,16 @@ async def _check_and_post_impl() -> Optional[str]:
             if deal.is_free:
                 await notify_free_game_subscribers(deal)
 
-            # Дублируем в ВК
+            # Дублируем в ВК с рейтингом и IGDB
             try:
                 from vk_publisher import post_deal_to_vk
-                await post_deal_to_vk(deal, rating_cache.get(deal.deal_id))
+                from igdb import get_game_info
+                igdb_info = None
+                try:
+                    igdb_info = await get_game_info(deal.title)
+                except Exception:
+                    pass
+                await post_deal_to_vk(deal, rating_cache.get(deal.deal_id), igdb_info=igdb_info)
             except Exception as e:
                 log.warning(f"VK публикация не удалась: {e}")
             

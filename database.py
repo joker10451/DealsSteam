@@ -25,10 +25,10 @@ async def init_db():
                 posted_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        # Добавляем колонку link если её нет (миграция для существующих БД)
-        await conn.execute("""
-            ALTER TABLE posted_deals ADD COLUMN IF NOT EXISTS link TEXT
-        """)
+        # Миграции для существующих БД
+        await conn.execute("ALTER TABLE posted_deals ADD COLUMN IF NOT EXISTS link TEXT")
+        await conn.execute("ALTER TABLE posted_deals ADD COLUMN IF NOT EXISTS old_price TEXT")
+        await conn.execute("ALTER TABLE posted_deals ADD COLUMN IF NOT EXISTS new_price TEXT")
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS wishlist (
                 id SERIAL PRIMARY KEY,
@@ -153,11 +153,11 @@ async def is_already_posted(deal_id: str) -> bool:
     return row is not None
 
 
-async def mark_as_posted(deal_id: str, title: str, store: str, discount: int = 0, link: str = ""):
+async def mark_as_posted(deal_id: str, title: str, store: str, discount: int = 0, link: str = "", old_price: str = "", new_price: str = ""):
     pool = await get_pool()
     await pool.execute(
-        "INSERT INTO posted_deals (deal_id, title, store, discount, link) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
-        deal_id, title, store, discount, link,
+        "INSERT INTO posted_deals (deal_id, title, store, discount, link, old_price, new_price) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
+        deal_id, title, store, discount, link, old_price, new_price,
     )
 
 

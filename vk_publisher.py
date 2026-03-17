@@ -76,7 +76,7 @@ async def _upload_photo(image_url: str) -> Optional[str]:
     return f"photo{photo['owner_id']}_{photo['id']}"
 
 
-async def post_deal_to_vk(deal, rating: Optional[dict] = None) -> bool:
+async def post_deal_to_vk(deal, rating: Optional[dict] = None, igdb_info: Optional[dict] = None) -> bool:
     """
     Опубликовать скидку в группу ВК.
     Возвращает True если успешно.
@@ -87,32 +87,71 @@ async def post_deal_to_vk(deal, rating: Optional[dict] = None) -> bool:
     try:
         store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}.get(deal.store, "🕹")
 
+        # Заголовок
         if deal.is_free:
-            header = "🎁 БЕСПЛАТНО"
-            price_line = f"Бесплатно (обычно {deal.old_price})"
+            header = "🎁 БЕСПЛАТНО — забирай прямо сейчас!"
+        elif deal.discount >= 80:
+            header = f"🔥 ОГОНЬ! Скидка {deal.discount}% — почти даром!"
+        elif deal.discount >= 50:
+            header = f"💥 Скидка {deal.discount}% — отличная цена!"
         else:
-            header = f"🔥 Скидка {deal.discount}%"
-            price_line = f"{deal.old_price} → {deal.new_price}"
+            header = f"🏷 Скидка {deal.discount}% на {deal.store}"
 
+        # Цена
+        if deal.is_free:
+            price_line = f"💸 Обычно {deal.old_price} — сейчас БЕСПЛАТНО"
+        else:
+            price_line = f"💰 {deal.old_price}  →  {deal.new_price}  (−{deal.discount}%)"
+
+        # Рейтинг
         rating_line = ""
         if rating and rating.get("score"):
-            rating_line = f"\n⭐ Рейтинг Steam: {rating['score']}%"
+            score = rating["score"]
+            score_emoji = "🏆" if score >= 95 else "👍" if score >= 80 else "🙂"
+            rating_line = f"\n{score_emoji} Рейтинг Steam: {score}% положительных отзывов"
+
+        # Жанры
+        genres_line = ""
+        genres = getattr(deal, "genres", [])
+        if genres:
+            genres_line = f"\n🎯 Жанры: {', '.join(genres[:4])}"
+
+        # Описание из IGDB
+        desc_line = ""
+        if igdb_info and igdb_info.get("summary"):
+            summary = igdb_info["summary"][:200].rstrip()
+            if len(igdb_info["summary"]) > 200:
+                summary += "..."
+            desc_line = f"\n\n📖 {summary}"
 
         text = (
             f"{header}\n\n"
-            f"{store_emoji} {deal.title}\n"
-            f"💰 {price_line}{rating_line}\n\n"
+            f"{store_emoji} {deal.title}"
+            f"{desc_line}\n\n"
+            f"{price_line}"
+            f"{rating_line}"
+            f"{genres_line}\n\n"
             f"🔗 Забрать: {deal.link}\n\n"
-            f"━━━━━━━━━━━━━━\n"
-            f"🎮 Больше скидок, раздачи ключей и мини-игры:\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎮 Больше скидок, раздачи ключей и мини-игры — в нашем Telegram:\n"
             f"👉 {TG_CHANNEL_LINK}"
         )
 
-        # Пробуем загрузить картинку
+        # Картинка: IGDB > deal.image_url > Steam capsule
         attachment = None
-        image_url = getattr(deal, "image_url", None)
+        image_url = None
+        if igdb_info and igdb_info.get("cover_url"):
+            image_url = igdb_info["cover_url"]
+        elif getattr(deal, "image_url", None):
+            image_url = deal.image_url
+        elif deal.store == "Steam" and deal.deal_id.startswith("steam_"):
+            appid = deal.deal_id.replace("steam_", "")
+            image_url = f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg"
+
         if image_url:
             attachment = await _upload_photo(image_url)
+            if not attachment:
+                log.warning(f"VK: не удалось загрузить фото для {deal.title}, постим без картинки")
 
         params = {
             "owner_id": -VK_GROUP_ID,

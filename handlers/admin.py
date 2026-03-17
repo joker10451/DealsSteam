@@ -864,10 +864,10 @@ async def cmd_test_vk(message: Message):
         await status_msg.edit_text("❌ VK_GROUP_ID не задан.")
         return
 
-    # Берём последний опубликованный deal
+    # Берём последний опубликованный deal с реальными ценами
     pool = await get_pool()
     row = await pool.fetchrow(
-        "SELECT deal_id, title, store, discount, link FROM posted_deals ORDER BY posted_at DESC LIMIT 1"
+        "SELECT deal_id, title, store, discount, link, old_price, new_price FROM posted_deals ORDER BY posted_at DESC LIMIT 1"
     )
 
     if row:
@@ -875,30 +875,51 @@ async def cmd_test_vk(message: Message):
             deal_id=row["deal_id"],
             title=row["title"],
             store=row["store"],
-            old_price="1000 ₽",
-            new_price=f"{int(1000 * (1 - row['discount'] / 100))} ₽",
+            old_price=row["old_price"] or "—",
+            new_price=row["new_price"] or "—",
             discount=row["discount"],
             link=row["link"],
         )
     else:
-        # Фиктивный deal если БД пустая
         deal = Deal(
-            deal_id="test_vk_1",
-            title="Тестовая игра",
+            deal_id="steam_570",
+            title="Dota 2",
             store="Steam",
-            old_price="999 ₽",
-            new_price="199 ₽",
-            discount=80,
-            link="https://store.steampowered.com",
+            old_price="0 ₽",
+            new_price="0 ₽",
+            discount=0,
+            link="https://store.steampowered.com/app/570/",
         )
 
-    ok = await post_deal_to_vk(deal)
+    # Загружаем рейтинг и IGDB для красивого поста
+    from enricher import get_steam_rating
+    from igdb import get_game_info
+    import asyncio as _asyncio
+
+    rating = igdb_info = None
+    try:
+        if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
+            appid = deal.deal_id.replace("steam_", "")
+            rating, igdb_info = await _asyncio.gather(
+                get_steam_rating(appid),
+                get_game_info(deal.title),
+            )
+        else:
+            igdb_info = await get_game_info(deal.title)
+    except Exception as e:
+        log.warning(f"testvk: не удалось загрузить enrichment: {e}")
+
+    ok = await post_deal_to_vk(deal, rating=rating, igdb_info=igdb_info)
     if ok:
         await status_msg.edit_text(
             f"✅ Пост опубликован в ВК!\n"
-            f"🔗 https://vk.com/club{VK_GROUP_ID}"
+            f"🔗 https://vk.com/club{VK_GROUP_ID}\n\n"
+            f"🎮 {esc(deal.title)} | −{deal.discount}%\n"
+            f"{'🖼 Картинка загружена' if igdb_info and igdb_info.get('cover_url') else '⚠️ Картинка не найдена'}\n"
+            f"{'⭐ Рейтинг: ' + str(rating['score']) + '%' if rating and rating.get('score') else '⚠️ Рейтинг не найден'}"
         )
     else:
         await status_msg.edit_text(
-            "❌ Ошибка публикации в ВК. Проверь логи — возможно токен не имеет прав на постинг в группу."
+            "❌ Ошибка публикации в ВК. Проверь логи — возможно токен не имеет прав на постинг в группу.\n\n"
+            "💡 Нужен токен группы с правом wall. Создай его в настройках группы ВК → Работа с API."
         )

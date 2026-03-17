@@ -329,6 +329,53 @@ async def select_winner(
         log.warning(f"Нет участников в конкурсе {giveaway_id}")
         return None
 
+    # Проверяем подписку на канал прямо перед розыгрышем —
+    # страховка на случай если chat_member событие не дошло
+    giveaway_row = await pool.fetchrow(
+        "SELECT require_channel_sub FROM giveaways WHERE giveaway_id = $1", giveaway_id
+    )
+    require_sub = giveaway_row and giveaway_row["require_channel_sub"]
+
+    if require_sub:
+        from config import CHANNEL_ID
+        from publisher import get_bot
+        bot = get_bot()
+        ineligible: list[int] = []
+        for row in rows:
+            uid = row["user_id"]
+            try:
+                member = await bot.get_chat_member(CHANNEL_ID, uid)
+                if member.status in ("left", "kicked", "banned"):
+                    ineligible.append(uid)
+            except Exception:
+                pass  # не удалось проверить — оставляем участника
+
+        if ineligible:
+            await pool.execute("""
+                UPDATE giveaway_participants
+                SET is_eligible = FALSE
+                WHERE giveaway_id = $1 AND user_id = ANY($2::bigint[])
+            """, giveaway_id, ineligible)
+            log.info(f"Отстранено {len(ineligible)} участников не в канале: {ineligible}")
+            # Перезапрашиваем только eligible
+            rows = await pool.fetch("""
+                SELECT
+                    gp.user_id,
+                    1 + COALESCE(r.referral_count, 0) AS slots
+                FROM giveaway_participants gp
+                LEFT JOIN (
+                    SELECT referrer_id, COUNT(*) AS referral_count
+                    FROM referrals
+                    GROUP BY referrer_id
+                ) r ON r.referrer_id = gp.user_id
+                WHERE gp.giveaway_id = $1 AND gp.is_eligible = TRUE
+                ORDER BY gp.user_id
+            """, giveaway_id)
+
+        if not rows:
+            log.warning(f"После проверки подписки не осталось участников в {giveaway_id}")
+            return None
+
     # Строим взвешенный список и считаем слоты каждого участника
     weighted: list[int] = []
     slots_map: dict[int, int] = {}
