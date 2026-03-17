@@ -177,29 +177,22 @@ async def post_deal_to_vk(deal, rating: Optional[dict] = None, igdb_info: Option
             f"👉 {TG_CHANNEL_LINK}"
         )
 
-        # Картинка: IGDB > deal.image_url > Steam capsule
-        attachment = None
-        image_url = None
-        if igdb_info and igdb_info.get("cover_url"):
-            image_url = igdb_info["cover_url"]
-        elif getattr(deal, "image_url", None):
-            image_url = deal.image_url
-        elif deal.store == "Steam" and deal.deal_id.startswith("steam_"):
-            appid = deal.deal_id.replace("steam_", "")
-            image_url = f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg"
-
-        if image_url:
-            attachment = await _upload_photo(image_url)
-            if not attachment:
-                log.warning(f"VK: не удалось загрузить фото для {deal.title}, постим без картинки")
+        # Картинка: групповой токен VK не поддерживает photos.getWallUploadServer (error 27).
+        # Используем link attachment — VK подтянет превью со страницы Steam/IGDB автоматически.
+        # Приоритет: Steam store page (богатое превью) > IGDB cover URL
+        link_attachment = None
+        if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
+            link_attachment = deal.link  # Steam страница — VK покажет capsule image
+        elif igdb_info and igdb_info.get("cover_url"):
+            link_attachment = igdb_info["cover_url"]
 
         params = {
             "owner_id": -VK_GROUP_ID,
             "from_group": 1,
             "message": text,
         }
-        if attachment:
-            params["attachments"] = attachment
+        if link_attachment:
+            params["attachments"] = link_attachment
 
         result = await _vk_request("wall.post", params)
         if result and result.get("post_id"):
