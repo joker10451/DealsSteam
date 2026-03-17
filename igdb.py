@@ -104,7 +104,7 @@ async def get_game_info(title: str) -> Optional[dict]:
         f'fields name, summary, rating, cover.url, '
         f'screenshots.url, genres.name, hypes, '
         f'aggregated_rating, total_rating, age_ratings.rating, id, '
-        f'similar_games.name; '
+        f'similar_games.name, game_modes.name, multiplayer_modes; '
         f'where version_parent = null; '
         f'limit 1;'
     )
@@ -170,6 +170,16 @@ async def get_game_info(title: str) -> Optional[dict]:
     # Похожие игры
     similar = [g["name"] for g in game.get("similar_games", [])[:3]]
 
+    # Кооп-флаг: game_modes содержит "Co-operative" или multiplayer_modes не пустой
+    game_modes = [m.get("name", "").lower() for m in game.get("game_modes", [])]
+    is_coop = any(
+        kw in m for m in game_modes
+        for kw in ("co-op", "co-operative", "cooperative", "multiplayer")
+    )
+    # multiplayer_modes — массив объектов, само наличие = есть мультиплеер
+    if not is_coop and game.get("multiplayer_modes"):
+        is_coop = True
+
     result = {
         "description": description,
         "rating": rating,
@@ -179,6 +189,7 @@ async def get_game_info(title: str) -> Optional[dict]:
         "igdb_id": game.get("id"),
         "is_adult": is_adult,
         "similar_games": similar,
+        "is_coop": is_coop,
     }
     _game_cache[cache_key] = (result, time.time() + _GAME_CACHE_TTL)
     return result

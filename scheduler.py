@@ -17,6 +17,7 @@ from database import (
     is_already_posted, mark_as_posted, cleanup_old_records,
     get_weekly_top, get_top_voted,
     get_all_genre_subscribers_for_deal,
+    increment_metric,
 )
 from parsers.steam import get_steam_deals
 from parsers.epic import get_epic_deals
@@ -647,3 +648,152 @@ async def sync_all_steam_libraries():
     
     except Exception as e:
         log.error(f"Fatal error in sync_all_steam_libraries: {e}", exc_info=True)
+
+
+# Кооп-игры с известным Friend's Pass (купил один — играют двое)
+_FRIENDS_PASS_GAMES = {
+    "it takes two", "a way out", "we were here", "we were here too",
+    "we were here together", "we were here forever", "sackboy",
+    "hazelight", "far: changing tides",
+}
+
+# Кооп-теги в жанрах/тегах Steam
+_COOP_KEYWORDS = (
+    "co-op", "co op", "coop", "multiplayer", "multi-player",
+    "local co-op", "online co-op", "split screen", "кооп",
+)
+
+
+def _is_coop_deal(deal, igdb_info: dict | None) -> bool:
+    """Определяет, является ли игра кооперативной."""
+    title_lower = deal.title.lower()
+
+    # Friend's Pass — особый случай
+    if any(fp in title_lower for fp in _FRIENDS_PASS_GAMES):
+        return True
+
+    # IGDB game_modes
+    if igdb_info and igdb_info.get("is_coop"):
+        return True
+
+    # Жанры/теги из парсера
+    genres_lower = [g.lower() for g in (deal.genres or [])]
+    if any(kw in g for kw in _COOP_KEYWORDS for g in genres_lower):
+        return True
+
+    # Название содержит кооп-слова
+    if any(kw in title_lower for kw in _COOP_KEYWORDS):
+        return True
+
+    return False
+
+
+async def post_coop_digest():
+    """
+    Пятничный дайджест «Во что поиграть с другом?»
+    Ищет кооп-игры среди текущих скидок и публикует подборку из 3-4 игр.
+    """
+    log.info("Запуск пятничного кооп-дайджеста...")
+
+    all_deals = []
+    for fetcher in [get_steam_deals, get_epic_deals]:
+        try:
+            deals = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
+            all_deals.extend(deals)
+        except Exception as e:
+            log.warning(f"coop_digest: ошибка парсера: {e}")
+
+    if not all_deals:
+        log.info("coop_digest: нет скидок")
+        return
+
+    # Фильтруем и определяем кооп
+    coop_deals = []
+    seen_titles: set[str] = set()
+
+    for deal in all_deals:
+        key = deal.title.lower().strip()
+        if key in seen_titles:
+            continue
+        if FILTER_BUNDLES and "bundle" in deal.title.lower():
+            continue
+
+        igdb_info = await get_game_info(deal.title)
+        if _is_coop_deal(deal, igdb_info):
+            coop_deals.append((deal, igdb_info))
+            seen_titles.add(key)
+
+        if len(coop_deals) >= 4:
+            break
+
+    if not coop_deals:
+        log.info("coop_digest: кооп-игры не найдены")
+        return
+
+    # Формируем пост
+    now = datetime.now(MSK).strftime("%d.%m.%Y")
+    lines = [
+        f"👥 <b>ВО ЧТО ПОИГРАТЬ С ДРУГОМ? · {now}</b>",
+        "",
+        "Выходные близко! Подборка кооп-игр со скидками 👇",
+        "",
+    ]
+
+    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}
+    buttons = []
+
+    for deal, igdb_info in coop_deals:
+        emoji = store_emoji.get(deal.store, "🕹")
+        title_lower = deal.title.lower()
+
+        # Специальная пометка для Friend's Pass
+        friends_pass = any(fp in title_lower for fp in _FRIENDS_PASS_GAMES)
+        fp_note = "\n   🔑 <i>Friend's Pass — купи одну копию, играйте вдвоём!</i>" if friends_pass else ""
+
+        if deal.is_free:
+            price_line = "🆓 <b>БЕСПЛАТНО</b>"
+        else:
+            price_line = f"<s>{esc(deal.old_price)}</s> → <b>{esc(deal.new_price)}</b> <code>−{deal.discount}%</code>"
+
+        rating_line = ""
+        if igdb_info and igdb_info.get("rating"):
+            r = igdb_info["rating"]
+            rating_line = f"\n   ⭐ IGDB: {r}/100"
+
+        lines.append(f"{emoji} <b>{esc(deal.title)}</b>")
+        lines.append(f"   {price_line}{rating_line}{fp_note}")
+        lines.append("")
+
+        buttons.append([InlineKeyboardButton(
+            text=f"🛒 {deal.title[:30]}",
+            url=deal.link,
+        )])
+
+    lines.append("#кооп #выходные #скидки #игратьсдругом")
+
+    # Кнопка "Позвать друга" — ведёт на бота (реферальная ссылка генерируется при нажатии в личке)
+    from config import BOT_USERNAME
+    if BOT_USERNAME:
+        buttons.append([InlineKeyboardButton(
+            text="👥 Позвать друга (+100 баллов)",
+            url=f"https://t.me/{BOT_USERNAME}?start=invite",
+        )])
+
+    buttons.append([
+        InlineKeyboardButton(text="🔥 0", callback_data="vote:fire:coop_digest"),
+        InlineKeyboardButton(text="💩 0", callback_data="vote:poop:coop_digest"),
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    text = "\n".join(lines)
+
+    try:
+        await send_with_retry(lambda: get_bot().send_message(
+            CHANNEL_ID, text,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        ))
+        log.info(f"Кооп-дайджест опубликован: {len(coop_deals)} игр")
+        await increment_metric("coop_digest_published")
+    except Exception as e:
+        log.error(f"coop_digest: ошибка публикации: {e}")

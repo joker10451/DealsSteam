@@ -17,7 +17,7 @@ from publisher import set_bot
 from scheduler import (
     check_and_post, post_weekly_digest, post_hidden_gems, run_parser_tests,
     sync_all_steam_wishlists, sync_all_steam_libraries,
-    check_bot_health, run_garbage_collect,
+    check_bot_health, run_garbage_collect, post_coop_digest,
 )
 
 from publisher import flush_notification_queue
@@ -115,6 +115,7 @@ async def main():
         BotCommand(command="broadcast", description="Рассылка сообщения всем пользователям"),
         BotCommand(command="channelstat", description="Статистика пользователей бота"),
         BotCommand(command="tip", description="Опубликовать совет дня"),
+        BotCommand(command="coop", description="Опубликовать кооп-дайджест"),
     ]
 
     await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
@@ -220,6 +221,13 @@ async def main():
         name="db_garbage_collect"
     )
     log.info("Очистка БД (GC): каждое воскресенье в 03:00 МСК")
+
+    scheduler.add_job(
+        post_coop_digest,
+        CronTrigger(day_of_week="fri", hour=18, minute=0, timezone=MSK),
+        name="coop_digest"
+    )
+    log.info("Кооп-дайджест: каждую пятницу в 18:00 МСК")
 
     # Giveaway System Jobs
     from giveaways import check_ended_giveaways, check_giveaway_reminders

@@ -721,3 +721,15 @@ async def cmd_tip(message: Message):
     from tips import post_tip_of_the_week
     await post_tip_of_the_week()
     await message.answer("✅ Совет опубликован.")
+
+
+@router.message(Command("coop"))
+async def cmd_coop(message: Message):
+    """Опубликовать кооп-дайджест вручную (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+    await message.answer("📤 Ищу кооп-игры...")
+    from scheduler import post_coop_digest
+    await post_coop_digest()
+    await message.answer("✅ Готово.")

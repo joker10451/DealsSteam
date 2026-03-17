@@ -46,3 +46,6 @@ PRICE_COMPARISON_ENABLED = os.getenv("PRICE_COMPARISON_ENABLED", "true").lower()
 # Steam sync rate limiting
 STEAM_SYNC_COOLDOWN_HOURS = int(os.getenv("STEAM_SYNC_COOLDOWN_HOURS", "1"))
 ITAD_API_KEY = os.getenv("ITAD_API_KEY", "")
+
+# Username бота без @ (нужен для реферальных ссылок в постах канала)
+BOT_USERNAME = os.getenv("BOT_USERNAME", "")
