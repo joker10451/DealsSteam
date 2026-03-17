@@ -387,7 +387,11 @@ async def cmd_giveaway_stat(message: Message):
         ref_str = f" (+{refs} реф.)" if refs > 0 else ""
         try:
             user = await message.bot.get_chat(user_id)
-            name = f"@{user.username}" if user.username else esc(user.first_name or str(user_id))
+            if user.username:
+                name = f"@{user.username}"
+            else:
+                display = esc(user.first_name or str(user_id))
+                name = f'<a href="tg://user?id={user_id}">{display}</a>'
         except Exception:
             name = str(user_id)
         lines.append(f"• {name}{ref_str} — {slots} шанс. ({chance:.1f}%)")
