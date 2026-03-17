@@ -19,7 +19,7 @@ from scheduler import (
     sync_all_steam_wishlists, sync_all_steam_libraries,
     check_bot_health, run_garbage_collect,
 )
-from tips import post_tip_of_the_week
+
 from publisher import flush_notification_queue
 from free_game_monitor import check_epic_free_games, check_gog_free_games
 from database import price_cache_cleanup
@@ -220,13 +220,6 @@ async def main():
         name="db_garbage_collect"
     )
     log.info("Очистка БД (GC): каждое воскресенье в 03:00 МСК")
-
-    scheduler.add_job(
-        post_tip_of_the_week,
-        CronTrigger(day_of_week="wed", hour=12, minute=30, timezone=MSK),
-        name="tip_of_the_week"
-    )
-    log.info("Совет дня: каждую среду в 12:30 МСК")
 
     # Giveaway System Jobs
     from giveaways import check_ended_giveaways, check_giveaway_reminders
