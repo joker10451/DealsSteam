@@ -844,6 +844,42 @@ async def cmd_test_game(message: Message):
         )
 
 
+@router.message(Command("kickgiveaway"))
+async def cmd_kick_giveaway(message: Message):
+    """Удалить участника из розыгрыша. Использование: /kickgiveaway [giveaway_id] [user_id]"""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    args = message.text.split(maxsplit=2)
+    if len(args) < 3:
+        await message.answer(
+            "Использование: <code>/kickgiveaway [giveaway_id] [user_id]</code>\n"
+            "Пример: <code>/kickgiveaway giveaway_1773658150 123456789</code>"
+        )
+        return
+
+    giveaway_id = args[1].strip()
+    try:
+        user_id = int(args[2].strip())
+    except ValueError:
+        await message.answer("❌ Неверный user_id")
+        return
+
+    from database import get_pool
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM giveaway_participants WHERE giveaway_id = $1 AND user_id = $2",
+        giveaway_id, user_id
+    )
+    # result вида "DELETE N"
+    deleted = int(result.split()[-1]) if result else 0
+    if deleted:
+        await message.answer(f"✅ Пользователь {user_id} удалён из розыгрыша <code>{esc(giveaway_id)}</code>")
+    else:
+        await message.answer(f"⚠️ Пользователь {user_id} не найден в розыгрыше <code>{esc(giveaway_id)}</code>")
+
+
 @router.message(Command("cleantestgiveaways"))
 async def cmd_clean_test_giveaways(message: Message):
     """Удалить все тестовые розыгрыши из БД (только админ)."""
