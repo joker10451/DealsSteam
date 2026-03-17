@@ -131,6 +131,7 @@ async def main():
         BotCommand(command="channelstat", description="Статистика пользователей бота"),
         BotCommand(command="tip", description="Опубликовать совет дня"),
         BotCommand(command="coop", description="Опубликовать кооп-дайджест"),
+        BotCommand(command="testgame", description="Тест мини-игр в личку"),
     ]
 
     await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())

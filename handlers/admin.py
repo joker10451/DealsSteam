@@ -735,3 +735,110 @@ async def cmd_coop(message: Message):
     from scheduler import post_coop_digest
     await post_coop_digest()
     await message.answer("✅ Готово.")
+
+
+@router.message(Command("testgame"))
+async def cmd_test_game(message: Message):
+    """Запустить мини-игры в личку админу для тестирования."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    status_msg = await message.answer("🔄 Готовлю тестовые игры...")
+
+    from publisher import get_bot, send_with_retry
+    from minigames import create_screenshot_game
+    from database import get_pool
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from parsers.steam import Deal
+    import random
+
+    bot = get_bot()
+    user_id = message.from_user.id
+
+    # Берём последний опубликованный deal из БД
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT deal_id, title, store, discount, link FROM posted_deals ORDER BY posted_at DESC LIMIT 1"
+    )
+
+    if not row:
+        await status_msg.edit_text("❌ Нет опубликованных сделок в БД. Сначала опубликуй хоть один пост.")
+        return
+
+    # Создаём фиктивный Deal для игр
+    deal = Deal(
+        deal_id=row["deal_id"],
+        title=row["title"],
+        store=row["store"],
+        old_price="1000₽",
+        new_price=f"{int(1000 * (1 - row['discount'] / 100))}₽",
+        discount=row["discount"],
+        link=row["link"],
+    )
+
+    await status_msg.edit_text("🔄 Запускаю игры...")
+
+    # --- Игра 1: Угадай цену ---
+    correct = 1000
+    variants: set = {correct}
+    attempts = 0
+    while len(variants) < 4 and attempts < 50:
+        attempts += 1
+        pct = random.randint(15, 50)
+        sign = random.choice([-1, 1])
+        raw = correct * (1 + sign * pct / 100)
+        fake = round(raw / 50) * 50
+        if fake > 0 and fake != correct:
+            variants.add(fake)
+
+    options = list(variants)
+    random.shuffle(options)
+    buttons = [
+        InlineKeyboardButton(text=f"{p}₽", callback_data=f"pg:{deal.deal_id}:{p}")
+        for p in options
+    ]
+    rows_kb = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
+
+    price_text = (
+        f"🎲 <b>Игра 1: Угадай цену!</b>\n\n"
+        f"🎮 <b>{esc(deal.title)}</b>\n"
+        f"🏷 Скидка: <b>−{deal.discount}%</b>  →  сейчас <b>{esc(deal.new_price)}</b>\n\n"
+        f"Сколько стоила игра <b>до скидки</b>? 👇\n\n"
+        f"<i>🧪 Тест — правильный ответ: {correct}₽</i>"
+    )
+
+    await send_with_retry(lambda: bot.send_message(
+        user_id, price_text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows_kb),
+    ))
+
+    # --- Игра 2: Угадай игру по скриншоту ---
+    game_data = await create_screenshot_game(deal)
+
+    if game_data:
+        screenshot_buttons = [
+            InlineKeyboardButton(
+                text=opt,
+                callback_data=f"sg:{game_data['game_id']}:{opt[:30]}"
+            )
+            for opt in game_data["options"]
+        ]
+        screenshot_rows = [[btn] for btn in screenshot_buttons]
+
+        await send_with_retry(lambda: bot.send_photo(
+            user_id,
+            photo=game_data["screenshot_url"],
+            caption=(
+                f"🖼 <b>Игра 2: Угадай игру по скриншоту!</b>\n\n"
+                f"Какая это игра? 👇\n\n"
+                f"<i>🧪 Тест — правильный ответ: {esc(game_data['correct_title'])}</i>"
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=screenshot_rows),
+        ))
+        await status_msg.edit_text("✅ Обе игры отправлены тебе в личку!")
+    else:
+        await status_msg.edit_text(
+            "✅ Игра «Угадай цену» отправлена в личку.\n"
+            "⚠️ Скриншот-игра недоступна — нет данных IGDB для этой игры."
+        )

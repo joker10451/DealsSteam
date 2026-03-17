@@ -121,13 +121,13 @@ def test_deduplicate_unique_deals():
 def test_theme_score_match():
     """WHEN genres содержит жанр из темы, SHALL вернуть 1."""
     deal = _deal(genres=["RPG", "Action"])
-    assert theme_score(deal, ["RPG", "Ролевые"]) == 1
+    assert theme_score(deal, ["rpg", "ролевые"]) == 1
 
 
 def test_theme_score_no_match():
     """WHEN genres не содержит жанров из темы, SHALL вернуть 0."""
     deal = _deal(genres=["Puzzle"])
-    assert theme_score(deal, ["RPG", "Ролевые"]) == 0
+    assert theme_score(deal, ["rpg", "ролевые"]) == 0
 
 
 def test_theme_score_empty_theme():
@@ -176,9 +176,10 @@ def test_property_theme_score_correctness(genres, theme_genres):
     """Property 20: theme_score == 0 если theme_genres пустой или нет пересечения, иначе 1."""
     deal = _deal(genres=genres)
     score = theme_score(deal, theme_genres)
+    genres_lower = [g.lower() for g in genres]
     if not theme_genres:
         assert score == 0
-    elif any(g in theme_genres for g in genres):
+    elif any(g in theme_genres for g in genres_lower):
         assert score == 1
     else:
         assert score == 0

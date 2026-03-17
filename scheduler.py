@@ -52,7 +52,8 @@ def deduplicate(deals: list) -> list:
 def theme_score(deal, theme_genres: list[str]) -> int:
     if not theme_genres:
         return 0
-    return 1 if any(g in deal.genres for g in theme_genres) else 0
+    deal_genres_lower = [g.lower() for g in deal.genres]
+    return 1 if any(g in deal_genres_lower for g in theme_genres) else 0
 
 
 async def check_and_post() -> Optional[str]:
