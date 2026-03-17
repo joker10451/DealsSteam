@@ -160,6 +160,9 @@ async def post_deal_to_vk(deal, rating: Optional[dict] = None, igdb_info: Option
         }
         if attachment:
             params["attachments"] = attachment
+        elif image_url:
+            # Fallback: передаём ссылку на картинку — VK покажет превью
+            params["attachments"] = image_url
 
         result = await _vk_request("wall.post", params)
         if result and result.get("post_id"):

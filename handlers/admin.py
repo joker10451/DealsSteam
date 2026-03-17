@@ -916,50 +916,36 @@ async def cmd_test_vk(message: Message):
         await message.answer("⛔ Нет доступа.")
         return
 
-    status_msg = await message.answer("🔄 Публикую тестовый пост в ВК...")
+    status_msg = await message.answer("🔄 Парсю свежие скидки для ВК...")
 
-    from database import get_pool
     from vk_publisher import post_deal_to_vk, VK_ENABLED, VK_GROUP_ID
-    from parsers.steam import Deal
-
-    if not VK_ENABLED:
-        await status_msg.edit_text("❌ VK_ENABLED=false. Включи в переменных окружения.")
-        return
-    if not VK_GROUP_ID:
-        await status_msg.edit_text("❌ VK_GROUP_ID не задан.")
-        return
-
-    # Берём последний опубликованный deal с реальными ценами
-    pool = await get_pool()
-    row = await pool.fetchrow(
-        "SELECT deal_id, title, store, discount, link, old_price, new_price FROM posted_deals ORDER BY posted_at DESC LIMIT 1"
-    )
-
-    if row:
-        deal = Deal(
-            deal_id=row["deal_id"],
-            title=row["title"],
-            store=row["store"],
-            old_price=row["old_price"] or "—",
-            new_price=row["new_price"] or "—",
-            discount=row["discount"],
-            link=row["link"],
-        )
-    else:
-        deal = Deal(
-            deal_id="steam_570",
-            title="Dota 2",
-            store="Steam",
-            old_price="0 ₽",
-            new_price="0 ₽",
-            discount=0,
-            link="https://store.steampowered.com/app/570/",
-        )
-
-    # Загружаем рейтинг и IGDB для красивого поста
+    from parsers.steam import get_steam_deals
+    from config import MIN_DISCOUNT_PERCENT
     from enricher import get_steam_rating
     from igdb import get_game_info
     import asyncio as _asyncio
+    import random
+
+    if not VK_ENABLED:
+        await status_msg.edit_text("❌ VK_ENABLED=false.")
+        return
+
+    # Берём живые скидки из парсера — там реальные цены
+    try:
+        deals = await get_steam_deals(min_discount=MIN_DISCOUNT_PERCENT)
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Ошибка парсера: {esc(str(e))}")
+        return
+
+    if not deals:
+        await status_msg.edit_text("❌ Парсер вернул 0 скидок.")
+        return
+
+    # Берём случайную с хорошей скидкой
+    good = [d for d in deals if d.discount >= 50] or deals
+    deal = random.choice(good)
+
+    await status_msg.edit_text(f"🔄 Нашёл: {esc(deal.title)} −{deal.discount}%\nЗагружаю данные...")
 
     rating = igdb_info = None
     try:
@@ -972,19 +958,23 @@ async def cmd_test_vk(message: Message):
         else:
             igdb_info = await get_game_info(deal.title)
     except Exception as e:
-        log.warning(f"testvk: не удалось загрузить enrichment: {e}")
+        log.warning(f"testvk enrichment: {e}")
 
     ok = await post_deal_to_vk(deal, rating=rating, igdb_info=igdb_info)
     if ok:
+        has_pic = igdb_info and igdb_info.get("cover_url")
+        has_rating = rating and rating.get("score")
         await status_msg.edit_text(
             f"✅ Пост опубликован в ВК!\n"
             f"🔗 https://vk.com/club{VK_GROUP_ID}\n\n"
             f"🎮 {esc(deal.title)} | −{deal.discount}%\n"
-            f"{'🖼 Картинка загружена' if igdb_info and igdb_info.get('cover_url') else '⚠️ Картинка не найдена'}\n"
-            f"{'⭐ Рейтинг: ' + str(rating['score']) + '%' if rating and rating.get('score') else '⚠️ Рейтинг не найден'}"
+            f"💰 {esc(deal.old_price)} → {esc(deal.new_price)}\n"
+            f"{'🖼 Картинка: есть' if has_pic else '⚠️ Картинка: нет (IGDB не нашёл)'}\n"
+            f"{'⭐ Рейтинг: ' + str(rating['score']) + '%' if has_rating else '⚠️ Рейтинг: нет'}"
         )
     else:
         await status_msg.edit_text(
-            "❌ Ошибка публикации в ВК. Проверь логи — возможно токен не имеет прав на постинг в группу.\n\n"
-            "💡 Нужен токен группы с правом wall. Создай его в настройках группы ВК → Работа с API."
+            "❌ Ошибка публикации в ВК.\n\n"
+            "💡 Убедись что токен — групповой (не личный) с правом wall.\n"
+            "Настройки группы ВК → Работа с API → Создать ключ доступа."
         )

@@ -43,7 +43,7 @@ def _deal(title="Test Game", discount=50, genres=None) -> Deal:
 # ---------------------------------------------------------------------------
 
 def test_get_daily_theme_monday():
-    """WHEN weekday == 0 (понедельник), SHALL вернуть тему с '⚔️' и жанрами ['RPG', 'Ролевые']."""
+    """WHEN weekday == 0 (понедельник), SHALL вернуть тему с '⚔️' и жанрами rpg/ролевые."""
     monday = datetime(2024, 1, 1)  # понедельник
     import pytz
     MSK = pytz.timezone("Europe/Moscow")
@@ -51,8 +51,8 @@ def test_get_daily_theme_monday():
         mock_dt.now.return_value = MSK.localize(monday)
         emoji, name, genres = get_daily_theme()
     assert emoji == "⚔️"
-    assert "RPG" in genres
-    assert "Ролевые" in genres
+    assert "rpg" in genres
+    assert "ролевые" in genres
 
 
 def test_get_daily_theme_all_days():
