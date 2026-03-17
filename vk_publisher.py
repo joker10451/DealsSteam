@@ -59,43 +59,57 @@ async def _vk_request_debug(method: str, params: dict) -> dict:
 
 async def _upload_photo(image_url: str) -> Optional[str]:
     """Загрузить фото по URL в VK и вернуть attachment-строку."""
-    from parsers.utils import fetch_with_retry
     import aiohttp
+    from parsers.utils import get_session
 
-    # Получаем upload server для стены группы
-    server = await _vk_request("photos.getWallUploadServer", {"group_id": VK_GROUP_ID})
-    if not server:
-        return None
-    upload_url = server["upload_url"]
-
-    # Скачиваем картинку и загружаем на VK upload server
     try:
-        from parsers.utils import get_session
+        # 1. Получаем upload server для стены группы
+        server_resp = await _vk_request("photos.getWallUploadServer", {"group_id": VK_GROUP_ID})
+        if not server_resp or not server_resp.get("upload_url"):
+            log.error("VK: не получили upload_url от photos.getWallUploadServer")
+            return None
+        upload_url = server_resp["upload_url"]
+
+        # 2. Скачиваем картинку
         session = get_session()
         async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             if resp.status != 200:
+                log.error(f"VK: не удалось скачать картинку {image_url}, status={resp.status}")
                 return None
             img_bytes = await resp.read()
+
+        # 3. Загружаем на VK upload server через multipart
         form = aiohttp.FormData()
         form.add_field("photo", img_bytes, filename="photo.jpg", content_type="image/jpeg")
-        async with session.post(upload_url, data=form) as resp:
+        async with session.post(upload_url, data=form, timeout=aiohttp.ClientTimeout(total=30)) as resp:
             upload_result = await resp.json(content_type=None)
+
+        log.debug(f"VK upload result: {upload_result}")
+
+        if not upload_result.get("photo") or upload_result.get("photo") == "[]":
+            log.error(f"VK: upload вернул пустое фото: {upload_result}")
+            return None
+
+        # 4. Сохраняем фото — передаём group_id (без минуса), photo, server, hash
+        saved = await _vk_request("photos.saveWallPhoto", {
+            "group_id": VK_GROUP_ID,
+            "photo": upload_result["photo"],
+            "server": upload_result["server"],
+            "hash": upload_result["hash"],
+        })
+
+        if not saved or not isinstance(saved, list) or not saved[0]:
+            log.error(f"VK: photos.saveWallPhoto вернул пустой ответ: {saved}")
+            return None
+
+        photo = saved[0]
+        attachment = f"photo{photo['owner_id']}_{photo['id']}"
+        log.info(f"VK: фото загружено успешно: {attachment}")
+        return attachment
+
     except Exception as e:
-        log.error(f"VK: ошибка загрузки фото: {e}")
+        log.error(f"VK: ошибка загрузки фото: {e}", exc_info=True)
         return None
-
-    # Сохраняем фото
-    saved = await _vk_request("photos.saveWallPhoto", {
-        "group_id": VK_GROUP_ID,
-        "photo": upload_result.get("photo"),
-        "server": upload_result.get("server"),
-        "hash": upload_result.get("hash"),
-    })
-    if not saved or not saved[0]:
-        return None
-
-    photo = saved[0]
-    return f"photo{photo['owner_id']}_{photo['id']}"
 
 
 async def post_deal_to_vk(deal, rating: Optional[dict] = None, igdb_info: Optional[dict] = None) -> bool:
@@ -119,11 +133,15 @@ async def post_deal_to_vk(deal, rating: Optional[dict] = None, igdb_info: Option
         else:
             header = f"🏷 Скидка {deal.discount}% на {deal.store}"
 
-        # Цена
+        # Цена — если парсер вернул "—", показываем только новую цену со скидкой
         if deal.is_free:
             price_line = f"💸 Обычно {deal.old_price} — сейчас БЕСПЛАТНО"
-        else:
+        elif deal.old_price and deal.old_price != "—" and deal.new_price and deal.new_price != "—":
             price_line = f"💰 {deal.old_price}  →  {deal.new_price}  (−{deal.discount}%)"
+        elif deal.new_price and deal.new_price != "—":
+            price_line = f"💰 {deal.new_price}  (скидка −{deal.discount}%)"
+        else:
+            price_line = f"🏷 Скидка −{deal.discount}%"
 
         # Рейтинг
         rating_line = ""
@@ -182,9 +200,6 @@ async def post_deal_to_vk(deal, rating: Optional[dict] = None, igdb_info: Option
         }
         if attachment:
             params["attachments"] = attachment
-        elif image_url:
-            # Fallback: передаём ссылку на картинку — VK покажет превью
-            params["attachments"] = image_url
 
         result = await _vk_request("wall.post", params)
         if result and result.get("post_id"):
