@@ -1004,8 +1004,14 @@ async def cmd_test_vk(message: Message):
             f"{'⭐ Рейтинг: ' + str(rating['score']) + '%' if has_rating else '⚠️ Рейтинг: нет'}"
         )
     else:
+        # Показываем точную ошибку от VK для диагностики
+        from vk_publisher import _vk_request_debug
+        debug = await _vk_request_debug("wall.post", {
+            "owner_id": -VK_GROUP_ID,
+            "from_group": 1,
+            "message": f"тест {deal.title}",
+        })
         await status_msg.edit_text(
-            "❌ Ошибка публикации в ВК.\n\n"
-            "💡 Убедись что токен — групповой (не личный) с правом wall.\n"
-            "Настройки группы ВК → Работа с API → Создать ключ доступа."
+            f"❌ Ошибка публикации в ВК.\n\n"
+            f"Ответ VK API:\n<code>{esc(str(debug))}</code>"
         )

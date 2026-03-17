@@ -19,13 +19,18 @@ VK_VERSION = "5.199"
 
 
 async def _vk_request(method: str, params: dict) -> Optional[dict]:
-    """Выполнить запрос к VK API через общую aiohttp сессию."""
-    from parsers.utils import fetch_with_retry
+    """Выполнить запрос к VK API через POST."""
+    from parsers.utils import get_session
+    import aiohttp
+
+    params = dict(params)
     params["access_token"] = VK_TOKEN
     params["v"] = VK_VERSION
     url = f"{VK_API}/{method}"
     try:
-        data = await fetch_with_retry(url, params=params)
+        session = get_session()
+        async with session.post(url, data=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            data = await resp.json(content_type=None)
         if data and "error" in data:
             log.error(f"VK API error in {method}: {data['error']}")
             return None
@@ -33,6 +38,23 @@ async def _vk_request(method: str, params: dict) -> Optional[dict]:
     except Exception as e:
         log.error(f"VK request failed ({method}): {e}")
         return None
+
+
+async def _vk_request_debug(method: str, params: dict) -> dict:
+    """Как _vk_request, но возвращает сырой ответ для отладки."""
+    from parsers.utils import get_session
+    import aiohttp
+
+    params = dict(params)
+    params["access_token"] = VK_TOKEN
+    params["v"] = VK_VERSION
+    url = f"{VK_API}/{method}"
+    try:
+        session = get_session()
+        async with session.post(url, data=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            return await resp.json(content_type=None)
+    except Exception as e:
+        return {"exception": str(e)}
 
 
 async def _upload_photo(image_url: str) -> Optional[str]:
