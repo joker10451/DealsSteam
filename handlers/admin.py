@@ -709,3 +709,15 @@ async def cmd_channel_stat(message: Message):
         lines.append(f"\n🏆 Топ игрок: {name} — <b>{top_score['total_score']} баллов</b>")
 
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("tip"))
+async def cmd_tip(message: Message):
+    """Опубликовать совет дня вручную (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+    await message.answer("📤 Публикую совет дня...")
+    from tips import post_tip_of_the_week
+    await post_tip_of_the_week()
+    await message.answer("✅ Совет опубликован.")

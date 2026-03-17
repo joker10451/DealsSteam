@@ -6,6 +6,34 @@ from database import add_vote, get_votes, increment_metric, engagement_event
 router = Router()
 
 
+@router.callback_query(F.data.startswith("tip_useful:"))
+async def handle_tip_useful(callback: CallbackQuery):
+    tip_id = callback.data.split(":", 1)[1]
+    await increment_metric("tip_useful")
+    # Обновляем кнопку — показываем что реакция учтена
+    try:
+        existing = callback.message.reply_markup
+        if existing:
+            new_rows = []
+            for row in existing.inline_keyboard:
+                new_row = []
+                for btn in row:
+                    cb = getattr(btn, "callback_data", None)
+                    if cb and cb.startswith("tip_useful:"):
+                        new_row.append(InlineKeyboardButton(
+                            text="👍 Полезно ✓", callback_data=cb
+                        ))
+                    else:
+                        new_row.append(btn)
+                new_rows.append(new_row)
+            await callback.message.edit_reply_markup(
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=new_rows)
+            )
+    except Exception:
+        pass
+    await callback.answer("Рад помочь! 👍", show_alert=False)
+
+
 @router.callback_query(F.data.startswith("vote:"))
 async def handle_vote(callback: CallbackQuery):
     _, vote_type, deal_id = callback.data.split(":", 2)
