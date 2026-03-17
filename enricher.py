@@ -4,15 +4,15 @@
 - Исторический минимум цены через CheapShark
 - Авто-комментарий бота по шаблонам
 """
-import aiohttp
 import asyncio
 import time
 from typing import Optional
 from parsers.steam import Deal
 
-# Простой TTL-кэш: {key: (value, expires_at)}
+# Простой TTL-кэш с ограничением размера: {key: (value, expires_at)}
 _cache: dict[str, tuple] = {}
 _CACHE_TTL = 3600  # 1 час
+_CACHE_MAX_SIZE = 1000  # максимум записей
 
 
 def _cache_get(key: str):
@@ -23,6 +23,17 @@ def _cache_get(key: str):
 
 
 def _cache_set(key: str, value, ttl: int = _CACHE_TTL):
+    # Если кэш переполнен — удаляем 20% самых старых записей
+    if len(_cache) >= _CACHE_MAX_SIZE:
+        now = time.time()
+        expired = [k for k, (_, exp) in _cache.items() if exp < now]
+        for k in expired:
+            del _cache[k]
+        # Если всё ещё переполнен — удаляем по времени истечения
+        if len(_cache) >= _CACHE_MAX_SIZE:
+            oldest = sorted(_cache.items(), key=lambda x: x[1][1])
+            for k, _ in oldest[:_CACHE_MAX_SIZE // 5]:
+                del _cache[k]
     _cache[key] = (value, time.time() + ttl)
 
 
@@ -55,11 +66,10 @@ async def get_steam_rating(appid: str) -> Optional[dict]:
 
     url = STEAM_APPDETAILS_URL.format(appid=appid)
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status != 200:
-                    return None
-                data = await r.json(content_type=None)
+        from parsers.utils import fetch_with_retry
+        data = await fetch_with_retry(url, as_json=True)
+        if not data:
+            return None
         summary = data.get("query_summary", {})
         total = summary.get("total_reviews", 0)
         positive = summary.get("total_positive", 0)

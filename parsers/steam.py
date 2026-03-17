@@ -104,8 +104,8 @@ async def get_steam_deals(min_discount: int = 50) -> list[Deal]:
         ends_at = row.get("data-discount-ends-at", "")
         if ends_at:
             try:
-                from datetime import datetime as dt
-                sale_end = dt.utcfromtimestamp(int(ends_at)).strftime("%d.%m.%Y")
+                from datetime import datetime as dt, timezone
+                sale_end = dt.fromtimestamp(int(ends_at), tz=timezone.utc).strftime("%d.%m.%Y")
             except Exception:
                 pass
 

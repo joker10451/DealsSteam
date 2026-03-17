@@ -3,7 +3,9 @@
 Поддерживает автоматическое отслеживание участников, выбор победителей и выдачу призов.
 """
 import asyncio
+import hashlib
 import logging
+import os
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -90,6 +92,10 @@ async def init_giveaways_db():
         await conn.execute(
             "ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS prize_delivery_status TEXT DEFAULT 'pending'"
         )
+        # Миграция: seed для commit-reveal схемы честности
+        await conn.execute(
+            "ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS draw_seed TEXT"
+        )
     
     log.info("Таблицы конкурсов инициализированы")
 
@@ -166,18 +172,19 @@ async def join_giveaway(giveaway_id: str, user_id: int) -> tuple[bool, str]:
     # Сравниваем aware datetimes напрямую (asyncpg возвращает TIMESTAMPTZ как UTC-aware)
     end_time = giveaway["end_time"]
     if end_time.tzinfo is None:
-        end_time = end_time.replace(tzinfo=MSK)
+        end_time = pytz.utc.localize(end_time)
     if datetime.now(MSK) > end_time:
         return False, "Конкурс уже завершён"
     
     # Проверяем возраст аккаунта
     if giveaway["min_account_age_days"] > 0:
         reg_date = await get_user_registration_date(user_id)
-        if reg_date:
-            reg_aware = reg_date if reg_date.tzinfo else reg_date.replace(tzinfo=MSK)
-            account_age = (datetime.now(MSK) - reg_aware).days
-            if account_age < giveaway["min_account_age_days"]:
-                return False, f"Аккаунт должен быть старше {giveaway['min_account_age_days']} дней"
+        if reg_date is None:
+            return False, f"Аккаунт должен быть старше {giveaway['min_account_age_days']} дней"
+        reg_aware = reg_date if reg_date.tzinfo else reg_date.replace(tzinfo=MSK)
+        account_age = (datetime.now(MSK) - reg_aware).days
+        if account_age < giveaway["min_account_age_days"]:
+            return False, f"Аккаунт должен быть старше {giveaway['min_account_age_days']} дней"
     
     # Проверяем подписку на канал (если требуется)
     if giveaway["require_channel_sub"]:
@@ -242,18 +249,39 @@ async def get_giveaway_participants(giveaway_id: str) -> list[int]:
     return [r["user_id"] for r in rows]
 
 
-async def select_winner(giveaway_id: str) -> Optional[int]:
+async def select_winner(
+    giveaway_id: str,
+) -> Optional[tuple[int, str, str, int, int]]:
     """
     Выбрать случайного победителя из участников.
     Участники, пригласившие друзей, получают дополнительные шансы:
     1 базовый шанс + 1 за каждого приглашённого реферала.
 
+    Использует commit-reveal схему:
+    - seed был сгенерирован и зафиксирован в БД при публикации конкурса
+    - SHA-256(seed) == commitment, опубликованный в посте до старта
+    - draw_hash = SHA-256(seed:giveaway_id:участники) — финальный хэш для проверки
+
     Returns:
-        user_id победителя или None если нет участников
+        (user_id, seed_hex, draw_hash, winner_slots, total_slots) или None
     """
     from database import get_pool
 
     pool = await get_pool()
+
+    # Берём seed, зафиксированный при публикации конкурса
+    seed_hex = await pool.fetchval(
+        "SELECT draw_seed FROM giveaways WHERE giveaway_id = $1", giveaway_id
+    )
+    if not seed_hex:
+        # Fallback для конкурсов созданных до миграции
+        seed_hex = os.urandom(32).hex()
+        await pool.execute(
+            "UPDATE giveaways SET draw_seed = $2 WHERE giveaway_id = $1",
+            giveaway_id, seed_hex,
+        )
+
+    seed_bytes = bytes.fromhex(seed_hex)
 
     # Один запрос: участники + количество их рефералов через LEFT JOIN
     rows = await pool.fetch("""
@@ -267,21 +295,42 @@ async def select_winner(giveaway_id: str) -> Optional[int]:
             GROUP BY referrer_id
         ) r ON r.referrer_id = gp.user_id
         WHERE gp.giveaway_id = $1 AND gp.is_eligible = TRUE
+        ORDER BY gp.user_id  -- детерминированный порядок для хэша
     """, giveaway_id)
 
     if not rows:
         log.warning(f"Нет участников в конкурсе {giveaway_id}")
         return None
 
-    # Строим взвешенный список
+    # Строим взвешенный список и считаем слоты каждого участника
     weighted: list[int] = []
+    slots_map: dict[int, int] = {}
     for row in rows:
-        weighted.extend([row["user_id"]] * int(row["slots"]))
+        uid = row["user_id"]
+        s = int(row["slots"])
+        slots_map[uid] = s
+        weighted.extend([uid] * s)
 
-    winner_id = random.choice(weighted)
+    total_slots = len(weighted)
 
-    log.info(f"Победитель конкурса {giveaway_id}: user {winner_id} (пул: {len(weighted)} слотов)")
-    return winner_id
+    # SHA-256(seed:giveaway_id:uid:slots,...) — финальный верифицируемый хэш
+    participants_str = ",".join(
+        f"{uid}:{slots_map[uid]}" for uid in sorted(slots_map)
+    )
+    draw_hash = hashlib.sha256(
+        f"{seed_hex}:{giveaway_id}:{participants_str}".encode()
+    ).hexdigest()
+
+    # Выбираем победителя через seeded RNG (воспроизводимо по seed)
+    rng = random.Random(seed_bytes)
+    winner_id = rng.choice(weighted)
+    winner_slots = slots_map[winner_id]
+
+    log.info(
+        f"Победитель конкурса {giveaway_id}: user {winner_id} "
+        f"({winner_slots}/{total_slots} слотов), hash={draw_hash[:16]}…"
+    )
+    return winner_id, seed_hex, draw_hash, winner_slots, total_slots
 
 
 async def award_prize(giveaway_id: str, winner_id: int) -> tuple[bool, str]:
@@ -368,9 +417,7 @@ async def award_prize(giveaway_id: str, winner_id: int) -> tuple[bool, str]:
             return True, f"Начислено {points} баллов"
 
         elif prize_type == "subscription":
-            from database import get_pool as _get_pool
-            _pool = await _get_pool()
-            async with _pool.acquire() as _conn:
+            async with pool.acquire() as _conn:
                 await _conn.execute("""
                     INSERT INTO user_rewards (user_id, reward_id, is_active)
                     VALUES ($1, $2, TRUE)
@@ -419,10 +466,9 @@ async def publish_giveaway(giveaway_id: str) -> Optional[int]:
     
     # Форматируем сообщение
     end_time = giveaway["end_time"]
-    if end_time.tzinfo is not None:
-        end_time = end_time.astimezone(MSK)
-    else:
-        end_time = end_time.replace(tzinfo=MSK)
+    if end_time.tzinfo is None:
+        end_time = pytz.utc.localize(end_time)
+    end_time = end_time.astimezone(MSK)
     end_str = end_time.strftime("%d.%m.%Y %H:%M МСК")
     
     prize_emoji = {
@@ -430,7 +476,18 @@ async def publish_giveaway(giveaway_id: str) -> Optional[int]:
         "points": "⭐",
         "subscription": "👑"
     }.get(giveaway["prize_type"], "🎁")
-    
+
+    # Генерируем seed заранее и сохраняем в БД (commit-reveal)
+    # Публикуем только SHA-256(seed) — commitment. Seed раскроем после розыгрыша.
+    seed_bytes = os.urandom(32)
+    seed_hex = seed_bytes.hex()
+    commitment = hashlib.sha256(seed_bytes).hexdigest()
+
+    await pool.execute(
+        "UPDATE giveaways SET draw_seed = $2 WHERE giveaway_id = $1",
+        giveaway_id, seed_hex,
+    )
+
     text = (
         f"🎁 <b>РОЗЫГРЫШ!</b>\n\n"
         f"{prize_emoji} <b>{esc(giveaway['title'])}</b>\n\n"
@@ -440,6 +497,9 @@ async def publish_giveaway(giveaway_id: str) -> Optional[int]:
         f"🎲 <b>Больше друзей = больше шансов!</b>\n"
         f"За каждого приглашённого друга ты получаешь +1 дополнительный шанс на победу.\n"
         f"Своя ссылка — в боте: /invite\n\n"
+        f"🔐 <b>Честность розыгрыша</b>\n"
+        f"Commitment: <code>{commitment[:32]}…</code>\n"
+        f"<i>Seed зафиксирован до старта. После розыгрыша будет раскрыт для проверки.</i>\n\n"
         f"<i>Нажми кнопку ниже для участия!</i>"
     )
     
@@ -512,9 +572,9 @@ async def end_giveaway(giveaway_id: str) -> bool:
         return False
 
     # Выбираем победителя
-    winner_id = await select_winner(giveaway_id)
+    draw_result = await select_winner(giveaway_id)
 
-    if not winner_id:
+    if not draw_result:
         await pool.execute(
             "UPDATE giveaways SET status = 'ended' WHERE giveaway_id = $1",
             giveaway_id,
@@ -532,8 +592,9 @@ async def end_giveaway(giveaway_id: str) -> bool:
                 pass
         return False
 
+    winner_id, seed_hex, draw_hash, winner_slots, total_slots = draw_result
+
     # Проверяем что winner_id — реальный пользователь, а не канал/группа
-    # Telegram user_id всегда положительный и < 10^10 для обычных пользователей
     if winner_id <= 0:
         log.error(f"Некорректный winner_id={winner_id} для конкурса {giveaway_id}")
         await pool.execute(
@@ -550,7 +611,7 @@ async def end_giveaway(giveaway_id: str) -> bool:
     # Выдаём приз
     success, prize_msg = await award_prize(giveaway_id, winner_id)
 
-    # Объявляем победителя в канале (без ключа — только имя)
+    # Объявляем победителя в канале с прозрачным отчётом о честности
     bot = get_bot()
     try:
         winner = await bot.get_chat(winner_id)
@@ -562,12 +623,20 @@ async def end_giveaway(giveaway_id: str) -> bool:
 
         participants_count = len(await get_giveaway_participants(giveaway_id))
 
-        # В канале — только поздравление БЕЗ ключа
+        # В канале — поздравление + данные для проверки честности (без ключа)
         announcement = (
             f"🎉 <b>Розыгрыш завершён!</b>\n\n"
             f"🎮 <b>{esc(giveaway['title'])}</b>\n\n"
             f"🏆 Победитель: {winner_mention}\n"
-            f"👥 Участников: {participants_count}\n\n"
+            f"👥 Участников: {participants_count} "
+            f"(всего слотов: {total_slots})\n"
+            f"🎯 Шансов у победителя: {winner_slots} из {total_slots}\n\n"
+            f"🔐 <b>Проверка честности (reveal)</b>\n"
+            f"Seed: <code>{seed_hex}</code>\n"
+            f"SHA-256(seed): <code>{hashlib.sha256(bytes.fromhex(seed_hex)).hexdigest()}</code>\n"
+            f"Draw hash: <code>{draw_hash}</code>\n\n"
+            f"<i>Commitment был опубликован в начале розыгрыша.\n"
+            f"Проверь: SHA-256(seed) == commitment из исходного поста.</i>\n\n"
             f"Поздравляем! 🎊"
         )
 
@@ -581,7 +650,7 @@ async def end_giveaway(giveaway_id: str) -> bool:
                 CHANNEL_ID, announcement, parse_mode="HTML"
             ))
 
-        log.info(f"Конкурс {giveaway_id} завершён, победитель: {winner_id}")
+        log.info(f"Конкурс {giveaway_id} завершён, победитель: {winner_id}, hash={draw_hash[:16]}…")
 
         try:
             from config import ADMIN_ID
@@ -591,7 +660,9 @@ async def end_giveaway(giveaway_id: str) -> bool:
                     f"✅ <b>Конкурс завершён!</b>\n\n"
                     f"🎮 {esc(giveaway['title'])}\n"
                     f"🏆 Победитель: {winner_mention} (<code>{winner_id}</code>)\n"
-                    f"👥 Участников: {participants_count}\n"
+                    f"👥 Участников: {participants_count} | Слотов: {total_slots}\n"
+                    f"🎯 Слотов победителя: {winner_slots}\n"
+                    f"🔐 Hash: <code>{draw_hash}</code>\n"
                     f"📦 Приз: {'✅ отправлен' if success else '❌ ' + prize_msg}",
                     parse_mode="HTML",
                 ))

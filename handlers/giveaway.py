@@ -65,12 +65,12 @@ async def cmd_giveaway(message: Message):
 
 
 def _to_msk(dt) -> "datetime":
-    """Безопасно конвертировать datetime в MSK: если уже aware — конвертируем, иначе replace."""
+    """Безопасно конвертировать datetime в MSK: если уже aware — конвертируем, иначе считаем UTC."""
     import pytz
     MSK = pytz.timezone("Europe/Moscow")
-    if dt.tzinfo is not None:
-        return dt.astimezone(MSK)
-    return dt.replace(tzinfo=MSK)
+    if dt.tzinfo is None:
+        dt = pytz.utc.localize(dt)
+    return dt.astimezone(MSK)
 
 
 @router.message(Command("creategiveaway"))

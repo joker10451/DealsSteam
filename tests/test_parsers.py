@@ -1,6 +1,6 @@
 """
-Тесты парсеров: Steam, GOG, Epic.
-Unit-тесты (2.1, 2.2, 2.3) + property-тесты через hypothesis (2.4).
+Тесты парсеров: Steam, Epic.
+Unit-тесты (2.1, 2.3) + property-тесты через hypothesis (2.4).
 """
 import sys
 import os
@@ -10,7 +10,6 @@ import pytest
 from unittest.mock import patch, AsyncMock
 
 from parsers.steam import Deal, _is_junk, get_steam_deals, SKIP_KEYWORDS
-from parsers.gog import get_gog_deals
 from parsers.epic import get_epic_deals
 
 from hypothesis import given, settings, assume
@@ -74,26 +73,6 @@ def _make_steam_html_multi(items: list[dict]) -> str:
     <span class="discount_final_price">{new_price}</span>
   </a>"""
     return f'<div id="search_resultsRows">{rows}</div>'
-
-
-def _make_gog_json(slug="some-game", title="Some Game", discount="75%",
-                   base="999 ₽", final="249 ₽") -> dict:
-    return {
-        "products": [
-            {
-                "slug": slug,
-                "title": title,
-                "price": {
-                    "discount": discount,
-                    "base": base,
-                    "final": final,
-                },
-                "genres": [{"name": "Action"}],
-                "coverHorizontal": "https://images.gog.com/cover.jpg",
-                "storeLink": f"https://www.gog.com/ru/game/{slug}",
-            }
-        ]
-    }
 
 
 def _make_epic_json(title="Free Epic Game", game_id="epic123",

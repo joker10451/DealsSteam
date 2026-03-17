@@ -16,7 +16,7 @@ DEAL_LINK = "https://www.cheapshark.com/redirect?dealID={deal_id}"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 # Магазины которые уже покрыты другими парсерами — пропускаем чтобы не дублировать
-SKIP_STORE_IDS = {"1", "7"}  # 1=Steam, 7=GOG
+SKIP_STORE_IDS = {"1"}  # 1=Steam
 
 
 async def get_cheapshark_deals(min_discount: int = 50) -> list[Deal]:

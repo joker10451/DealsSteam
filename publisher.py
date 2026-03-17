@@ -112,9 +112,7 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         (True, historical_low) если публикация успешна, (False, None) при ошибке
     """
     now = datetime.now(MSK).strftime("%d.%m.%Y")
-    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(deal.store, "🕹")
-
-    # Проверяем на ошибку цены
+    store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}.get(deal.store, "🕹")
     glitch_info = await check_for_glitch(deal)
     
     rating = prefetched_rating
@@ -313,11 +311,13 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         await increment_metric("published")
         await engagement_impression(deal.deal_id, deal.title, deal.store, deal.discount)
         
-        # Случайно публикуем игру со скриншотом (20% шанс)
+        # Случайно публикуем игру со скриншотом (20% шанс) — в фоне, не блокируем
         import random
         if random.random() < 0.2 and igdb_info and igdb_info.get("screenshots"):
-            await asyncio.sleep(30)
-            await publish_screenshot_game(deal, igdb_info)
+            async def _delayed_screenshot():
+                await asyncio.sleep(30)
+                await publish_screenshot_game(deal, igdb_info)
+            asyncio.create_task(_delayed_screenshot())
 
         # Контекстный совет отключён
         # from tips import get_contextual_tip
@@ -332,7 +332,7 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
 
 async def notify_users(user_ids: list[int], deal, header: str):
     """Отправляет уведомление о скидке списку пользователей."""
-    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(deal.store, "🕹")
+    store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}.get(deal.store, "🕹")
     price_line = "🆓 <b>БЕСПЛАТНО</b>" if deal.is_free else (
         f"<s>{esc(deal.old_price)}</s> → <b>{esc(deal.new_price)}</b> <code>-{deal.discount}%</code>"
     )
@@ -573,7 +573,7 @@ async def flush_notification_queue():
         if len(deals_data) == 1:
             # Одна сделка — обычное уведомление
             d = deals_data[0]
-            store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(d["deal_store"], "🕹")
+            store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}.get(d["deal_store"], "🕹")
             price_line = "🆓 <b>БЕСПЛАТНО</b>" if d["deal_is_free"] else (
                 f"<s>{esc(d['deal_old_price'])}</s> → <b>{esc(d['deal_new_price'])}</b> "
                 f"<code>-{d['deal_discount']}%</code>"
@@ -592,7 +592,7 @@ async def flush_notification_queue():
             # Несколько сделок — группируем в одно сообщение
             lines = [f"🔔 <b>Скидки на {len(deals_data)} игры из твоего вишлиста!</b>\n"]
             for d in deals_data:
-                store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(d["deal_store"], "🕹")
+                store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}.get(d["deal_store"], "🕹")
                 price_part = "🆓 БЕСПЛАТНО" if d["deal_is_free"] else f"-{d['deal_discount']}%"
                 lines.append(
                     f"{store_emoji} <a href='{d['deal_link']}'>{esc(d['deal_title'])}</a> "
@@ -602,11 +602,11 @@ async def flush_notification_queue():
             keyboard = None
 
         try:
-            await get_bot().send_message(
+            await send_with_retry(lambda uid=uid, text=text, keyboard=keyboard: get_bot().send_message(
                 uid, text,
                 reply_markup=keyboard,
                 disable_web_page_preview=True,
-            )
+            ))
             flushed_users += 1
         except TelegramForbiddenError:
             log.info(f"Пользователь {uid} заблокировал бота, удаляем из вишлиста")

@@ -136,7 +136,7 @@ async def cmd_top(message: Message):
         await wait_msg.edit_text("Сейчас нет новых скидок.")
         return
 
-    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get
+    store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}.get
     lines = ["🏆 <b>Топ скидок прямо сейчас:</b>\n"]
     buttons = []
     for i, deal in enumerate(deals, 1):

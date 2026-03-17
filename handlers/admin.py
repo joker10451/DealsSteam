@@ -122,7 +122,7 @@ async def cmd_stats(message: Message):
     # Топ-5 по вовлечённости
     if top:
         lines.append("\n🏆 <b>Топ-5 постов по вовлечённости</b>\n")
-        store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}
+        store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}
         for i, r in enumerate(top, 1):
             emoji = store_emoji.get(r["store"], "🕹")
             ctr = r["wl_ctr"]
@@ -367,7 +367,10 @@ async def cmd_test_post(message: Message):
 
     status_msg = await message.answer("🔄 Собираю скидки для теста...")
 
-    from scheduler import get_steam_deals, get_epic_deals, MIN_DISCOUNT_PERCENT, FILTER_BUNDLES, is_already_posted
+    from parsers.steam import get_steam_deals
+    from parsers.epic import get_epic_deals
+    from config import MIN_DISCOUNT_PERCENT, FILTER_BUNDLES
+    from database import is_already_posted
     from publisher import get_bot
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     import random
@@ -405,15 +408,14 @@ async def cmd_test_post(message: Message):
 
         deal = random.choice(pool)
 
-        # Импортируем форматирование из publisher напрямую
+        # Импортируем форматирование из нужных модулей
         from publisher import (
             esc,
             get_daily_theme,
             _localize_price,
-            generate_comment,
-            genres_to_hashtags,
-            make_collage,
         )
+        from enricher import generate_comment, genres_to_hashtags
+        from collage import make_collage
         from enricher import get_steam_rating, get_historical_low
         from igdb import get_game_info
         from price_glitch import check_for_glitch, format_glitch_alert
@@ -423,7 +425,7 @@ async def cmd_test_post(message: Message):
 
         MSK = pytz.timezone("Europe/Moscow")
         now = datetime.now(MSK).strftime("%d.%m.%Y")
-        store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}.get(
+        store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}.get(
             deal.store, "🕹"
         )
 

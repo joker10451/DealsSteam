@@ -19,7 +19,7 @@ from config import CHANNEL_ID
 router = Router()
 log = logging.getLogger(__name__)
 
-STORE_EMOJI = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}
+STORE_EMOJI = {"Steam": "🎮", "Epic Games": "🎁"}
 
 
 def _store_emoji(store: str) -> str:

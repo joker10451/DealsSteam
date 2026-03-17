@@ -72,11 +72,6 @@ async def check_epic_free_games():
         log.error(f"Error checking Epic free games: {e}", exc_info=True)
 
 
-async def check_gog_free_games():
-    """Заглушка — GOG удалён из проекта."""
-    log.info("GOG мониторинг отключён.")
-    return
-
 
 def _parse_epic_expiration(deal: Deal) -> Optional[str]:
     """
@@ -115,7 +110,6 @@ async def publish_free_game(deal: Deal, expiration_date: Optional[str] = None):
     # Format store emoji
     store_emoji = {
         "Epic Games": "🎁",
-        "GOG": "🟣",
         "Steam": "🎮"
     }.get(deal.store, "🎮")
     

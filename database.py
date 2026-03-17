@@ -53,6 +53,10 @@ async def init_db():
                 id SERIAL PRIMARY KEY,
                 deal_id TEXT UNIQUE NOT NULL,
                 original_price INTEGER NOT NULL,
+                title TEXT DEFAULT '',
+                new_price TEXT DEFAULT '',
+                link TEXT DEFAULT '',
+                discount INTEGER DEFAULT 0,
                 posted_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
@@ -294,16 +298,12 @@ async def get_top_voted(limit: int = 5) -> list[dict]:
 
 async def save_price_game(deal_id: str, original_price: int, title: str = "", new_price: str = "", link: str = "", discount: int = 0):
     pool = await get_pool()
-    # Миграция: добавляем колонки если их нет
-    async with pool.acquire() as conn:
-        for col, coltype in [("title", "TEXT DEFAULT ''"), ("new_price", "TEXT DEFAULT ''"), ("link", "TEXT DEFAULT ''"), ("discount", "INTEGER DEFAULT 0")]:
-            await conn.execute(f"ALTER TABLE price_game ADD COLUMN IF NOT EXISTS {col} {coltype}")
-        await conn.execute(
-            """INSERT INTO price_game (deal_id, original_price, title, new_price, link, discount)
-               VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (deal_id) DO UPDATE
-               SET original_price=$2, title=$3, new_price=$4, link=$5, discount=$6""",
-            deal_id, original_price, title, new_price, link, discount,
-        )
+    await pool.execute(
+        """INSERT INTO price_game (deal_id, original_price, title, new_price, link, discount)
+           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (deal_id) DO UPDATE
+           SET original_price=$2, title=$3, new_price=$4, link=$5, discount=$6""",
+        deal_id, original_price, title, new_price, link, discount,
+    )
 
 
 async def get_price_game(deal_id: str) -> dict | None:
@@ -1015,7 +1015,7 @@ async def init_notification_tables(conn):
             quiet_start INTEGER DEFAULT 23,
             quiet_end INTEGER DEFAULT 8,
             grouping_enabled BOOLEAN DEFAULT FALSE,
-            preferred_stores TEXT[] DEFAULT ARRAY['steam','gog','epic games'],
+        preferred_stores TEXT[] DEFAULT ARRAY['steam','epic games'],
             ignored_genres TEXT[] DEFAULT ARRAY[]::TEXT[],
             updated_at TIMESTAMPTZ DEFAULT NOW()
         )
@@ -1023,7 +1023,7 @@ async def init_notification_tables(conn):
     # Миграция для существующих БД
     await conn.execute("""
         ALTER TABLE user_notification_settings
-        ADD COLUMN IF NOT EXISTS preferred_stores TEXT[] DEFAULT ARRAY['steam','gog','epic games']
+        ADD COLUMN IF NOT EXISTS preferred_stores TEXT[] DEFAULT ARRAY['steam','epic games']
     """)
     await conn.execute("""
         ALTER TABLE user_notification_settings
@@ -1062,7 +1062,7 @@ async def notif_settings_get(user_id: int) -> dict:
         d = dict(row)
         # asyncpg возвращает массивы как list, но может быть None при старой схеме
         if d["preferred_stores"] is None:
-            d["preferred_stores"] = ["steam", "gog", "epic games"]
+            d["preferred_stores"] = ["steam", "epic games"]
         if d["ignored_genres"] is None:
             d["ignored_genres"] = []
         return d
@@ -1071,7 +1071,7 @@ async def notif_settings_get(user_id: int) -> dict:
         "quiet_start": 23,
         "quiet_end": 8,
         "grouping_enabled": False,
-        "preferred_stores": ["steam", "gog", "epic games"],
+        "preferred_stores": ["steam", "epic games"],
         "ignored_genres": [],
     }
 

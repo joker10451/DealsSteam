@@ -19,7 +19,18 @@ router = Router()
 
 # Временный кэш Steam URL для обхода лимита callback_data (64 байта)
 # key: 8-символьный hex-хэш, value: полный URL
+# Ограничен 500 записями — старые вытесняются при переполнении
 _steam_url_cache: dict[str, str] = {}
+_STEAM_URL_CACHE_MAX = 500
+
+
+def _steam_cache_set(key: str, value: str):
+    if len(_steam_url_cache) >= _STEAM_URL_CACHE_MAX:
+        # Удаляем первые 10% записей (FIFO)
+        to_remove = list(_steam_url_cache.keys())[:_STEAM_URL_CACHE_MAX // 10]
+        for k in to_remove:
+            del _steam_url_cache[k]
+    _steam_url_cache[key] = value
 
 STEAM_PROFILE_RE = re.compile(
     r"(?:https?://)?(?:www\.)?steamcommunity\.com/(?:id|profiles)/[\w-]+/?"
@@ -220,7 +231,7 @@ async def handle_wishlist_add(message: Message):
     if STEAM_PROFILE_RE.search(query):
         # Сохраняем URL в кэш, передаём только короткий ключ (8 hex-символов = 16 байт в callback)
         url_key = hashlib.md5(query.encode()).hexdigest()[:8]
-        _steam_url_cache[url_key] = query
+        _steam_cache_set(url_key, query)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
                 text="📥 Импортировать вишлист Steam",
@@ -367,7 +378,7 @@ async def cmd_free_subscribe(message: Message):
         await message.answer(
             "🎁 <b>Подписка активирована!</b>\n\n"
             "Теперь ты будешь получать уведомления о бесплатных играх "
-            "в Steam, GOG и Epic Games Store.\n\n"
+            "в Steam и Epic Games Store.\n\n"
             "Чтобы отписаться, используй /free_off"
         )
     else:

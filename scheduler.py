@@ -225,20 +225,16 @@ async def post_weekly_digest():
         return
 
     now = datetime.now(MSK).strftime("%d.%m.%Y")
-    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}
+    store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}
 
     lines = [f"📅 <b>ЛУЧШИЕ СКИДКИ НЕДЕЛИ — {now}</b>", "", "🏷 <b>Топ по скидке:</b>"]
     for i, row in enumerate(top_discount, 1):
         emoji = store_emoji.get(row["store"], "🕹")
         link = row.get("link") or ""
-        # Фолбэк: строим ссылку если link не сохранён
         if not link:
             if row["store"] == "Steam" and row["deal_id"].startswith("steam_"):
                 appid = row["deal_id"].replace("steam_", "")
                 link = f"https://store.steampowered.com/app/{appid}/"
-            elif row["store"] == "GOG" and row["deal_id"].startswith("gog_"):
-                slug = row["deal_id"].replace("gog_", "")
-                link = f"https://www.gog.com/ru/game/{slug}"
             elif row["store"] == "Epic Games" and row["deal_id"].startswith("epic_"):
                 link = "https://store.epicgames.com/ru/free-games"
         title_part = f"<a href='{link}'>{esc(row['title'])}</a>" if link else esc(row["title"])
@@ -253,8 +249,6 @@ async def post_weekly_digest():
                 if row["store"] == "Steam" and row["deal_id"].startswith("steam_"):
                     appid = row["deal_id"].replace("steam_", "")
                     link = f"https://store.steampowered.com/app/{appid}/"
-                elif row["store"] == "GOG" and row["deal_id"].startswith("gog_"):
-                    link = f"https://www.gog.com/ru/game/{row['deal_id'].replace('gog_', '')}"
             title_part = f"<a href='{link}'>{esc(row['title'])}</a>" if link else esc(row["title"])
             lines.append(f"{i}. {emoji} {title_part} — {row['fire_count']} 🔥")
 
@@ -741,7 +735,7 @@ async def post_coop_digest():
         "",
     ]
 
-    store_emoji = {"Steam": "🎮", "GOG": "🟣", "Epic Games": "🎁"}
+    store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}
     buttons = []
 
     for deal, igdb_info in coop_deals:

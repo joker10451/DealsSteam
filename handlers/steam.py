@@ -305,7 +305,7 @@ async def cmd_free_notify(message: Message):
         await message.answer(
             "✅ Подписка на уведомления о бесплатных играх активирована!\n\n"
             "Ты будешь получать личные сообщения когда игры становятся бесплатными "
-            "в Epic Games Store или GOG."
+            "в Epic Games Store."
         )
         log.info(f"User {message.from_user.id} subscribed to free game notifications")
     else:

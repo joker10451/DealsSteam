@@ -17,8 +17,8 @@ from database import notif_settings_get, notif_settings_set
 log = logging.getLogger(__name__)
 router = Router()
 
-STORES = ["steam", "gog", "epic games"]
-STORE_LABELS = {"steam": "🎮 Steam", "gog": "🟣 GOG", "epic games": "🎁 Epic Games"}
+STORES = ["steam", "epic games"]
+STORE_LABELS = {"steam": "🎮 Steam", "epic games": "🎁 Epic Games"}
 
 GENRES = ["action", "rpg", "strategy", "horror", "indie", "co-op",
           "roguelike", "survival", "puzzle", "shooter", "adventure", "simulation"]
@@ -320,7 +320,7 @@ async def cb_reset(callback: CallbackQuery):
         quiet_start=23,
         quiet_end=8,
         grouping_enabled=False,
-        preferred_stores=["steam", "gog", "epic games"],
+        preferred_stores=["steam", "epic games"],
         ignored_genres=[],
     )
     s = await notif_settings_get(callback.from_user.id)

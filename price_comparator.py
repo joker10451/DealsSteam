@@ -11,42 +11,28 @@ log = logging.getLogger(__name__)
 
 # API endpoints
 STEAM_SEARCH_API = "https://store.steampowered.com/api/storesearch/"
-GOG_SEARCH_API = "https://embed.gog.com/games/ajax/filtered"
 EPIC_GRAPHQL_API = "https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions"
 CHEAPSHARK_SEARCH_API = "https://www.cheapshark.com/api/1.0/games"
 
 
 async def compare_prices(game_title: str) -> dict:
     """
-    Queries Steam, GOG, Epic, CheapShark for game prices.
+    Queries Steam, Epic, CheapShark for game prices.
     Returns dict: {store: {price, discount, link, currency}}
     Uses 6-hour cache to reduce API load.
     Completes within 5 seconds or returns cached/partial data.
-    
-    Args:
-        game_title: Game title to search for
-        
-    Returns:
-        Dict mapping store names to price info dicts
-        Example: {
-            "Steam": {"price": "499", "discount": 50, "link": "...", "currency": "RUB"},
-            "GOG": {"price": "599", "discount": 30, "link": "...", "currency": "RUB"}
-        }
     """
-    # Check cache first
     cached = await price_cache_get(game_title)
     if cached:
         log.info(f"Price cache hit for '{game_title}'")
         return cached.get("prices", {})
-    
+
     log.info(f"Fetching prices for '{game_title}' from all stores")
-    
-    # Query all stores in parallel with 5-second timeout
+
     try:
         results = await asyncio.wait_for(
             asyncio.gather(
                 _fetch_steam_price(game_title),
-                _fetch_gog_price(game_title),
                 _fetch_epic_price(game_title),
                 _fetch_cheapshark_price(game_title),
                 return_exceptions=True
@@ -56,23 +42,21 @@ async def compare_prices(game_title: str) -> dict:
     except asyncio.TimeoutError:
         log.warning(f"Price comparison timeout for '{game_title}'")
         return {}
-    
-    # Aggregate results, handling partial failures
+
     prices = {}
-    store_names = ["Steam", "GOG", "Epic Games", "CheapShark"]
-    
+    store_names = ["Steam", "Epic Games", "CheapShark"]
+
     for store_name, result in zip(store_names, results):
         if isinstance(result, Exception):
             log.error(f"{store_name} price fetch failed: {result}")
             continue
         if result:
             prices[store_name] = result
-    
-    # Cache results if we got any data
+
     if prices:
         await price_cache_set(game_title, prices)
         log.info(f"Cached prices for '{game_title}': {len(prices)} stores")
-    
+
     return prices
 
 
@@ -125,46 +109,6 @@ async def _fetch_steam_price(game_title: str) -> Optional[dict]:
         log.error(f"Steam price fetch error: {e}")
         return None
 
-
-async def _fetch_gog_price(game_title: str) -> Optional[dict]:
-    """
-    Fetches price from GOG API.
-    
-    Returns:
-        Dict with price info or None if not found/error
-    """
-    try:
-        params = {
-            "search": game_title,
-            "limit": "1"
-        }
-        data = await fetch_with_retry(
-            GOG_SEARCH_API,
-            params=params,
-            as_json=True,
-            retries=2
-        )
-        
-        if not data or "products" not in data or not data["products"]:
-            return None
-        
-        product = data["products"][0]
-        
-        # Parse price
-        price_data = product.get("price", {})
-        price = price_data.get("finalAmount", "0")
-        base_price = price_data.get("baseAmount", price)
-        discount_percent = product.get("price", {}).get("discountPercentage", 0)
-        
-        return {
-            "price": str(price),
-            "discount": int(discount_percent) if discount_percent else 0,
-            "link": f"https://www.gog.com{product.get('url', '')}",
-            "currency": price_data.get("currency", "RUB")
-        }
-    except Exception as e:
-        log.error(f"GOG price fetch error: {e}")
-        return None
 
 
 async def _fetch_epic_price(game_title: str) -> Optional[dict]:
@@ -246,7 +190,6 @@ def format_price_comparison(prices: dict) -> str:
     # Store emojis
     store_emojis = {
         "Steam": "🎮",
-        "GOG": "🎯",
         "Epic Games": "🎪",
         "CheapShark": "💰"
     }

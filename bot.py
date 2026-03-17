@@ -21,7 +21,7 @@ from scheduler import (
 )
 
 from publisher import flush_notification_queue
-from free_game_monitor import check_epic_free_games, check_gog_free_games
+from free_game_monitor import check_epic_free_games
 from database import price_cache_cleanup
 from server import start_web_server, self_ping
 import server
@@ -34,6 +34,21 @@ MSK = pytz.timezone("Europe/Moscow")
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
+
+
+@dp.errors()
+async def global_error_handler(event, exception: Exception):
+    log.error(f"Необработанное исключение в хендлере: {exception}", exc_info=exception)
+    if ADMIN_ID:
+        try:
+            await bot.send_message(
+                ADMIN_ID,
+                f"⚠️ <b>Необработанная ошибка бота</b>\n\n"
+                f"<code>{type(exception).__name__}: {str(exception)[:300]}</code>",
+            )
+        except Exception:
+            pass
+    return True
 
 
 async def main():
@@ -184,14 +199,6 @@ async def main():
         name="epic_free_monitor"
     )
     log.info("Мониторинг бесплатных игр Epic: каждые 2 часа")
-
-    scheduler.add_job(
-        check_gog_free_games,
-        "interval",
-        hours=6,
-        name="gog_free_monitor"
-    )
-    log.info("Мониторинг бесплатных игр GOG: каждые 6 часов")
 
     # Price Cache Cleanup Job
     scheduler.add_job(
