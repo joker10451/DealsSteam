@@ -253,31 +253,32 @@ async def select_winner(giveaway_id: str) -> Optional[int]:
     """
     from database import get_pool
 
-    participants = await get_giveaway_participants(giveaway_id)
+    pool = await get_pool()
 
-    if not participants:
+    # Один запрос: участники + количество их рефералов через LEFT JOIN
+    rows = await pool.fetch("""
+        SELECT
+            gp.user_id,
+            1 + COALESCE(r.referral_count, 0) AS slots
+        FROM giveaway_participants gp
+        LEFT JOIN (
+            SELECT referrer_id, COUNT(*) AS referral_count
+            FROM referrals
+            GROUP BY referrer_id
+        ) r ON r.referrer_id = gp.user_id
+        WHERE gp.giveaway_id = $1 AND gp.is_eligible = TRUE
+    """, giveaway_id)
+
+    if not rows:
         log.warning(f"Нет участников в конкурсе {giveaway_id}")
         return None
 
-    # Строим взвешенный список: каждый участник + по 1 слоту за каждого реферала
-    pool = await get_pool()
+    # Строим взвешенный список
     weighted: list[int] = []
-    for user_id in participants:
-        referral_count = await pool.fetchval(
-            "SELECT COUNT(*) FROM referrals WHERE referrer_id = $1", user_id
-        ) or 0
-        # 1 базовый шанс + бонусные за рефералов
-        slots = 1 + int(referral_count)
-        weighted.extend([user_id] * slots)
+    for row in rows:
+        weighted.extend([row["user_id"]] * int(row["slots"]))
 
     winner_id = random.choice(weighted)
-
-    # Сохраняем победителя
-    await pool.execute("""
-        UPDATE giveaways
-        SET winner_user_id = $2, status = 'ended'
-        WHERE giveaway_id = $1
-    """, giveaway_id, winner_id)
 
     log.info(f"Победитель конкурса {giveaway_id}: user {winner_id} (пул: {len(weighted)} слотов)")
     return winner_id
@@ -305,12 +306,12 @@ async def award_prize(giveaway_id: str, winner_id: int) -> tuple[bool, str]:
     
     try:
         if prize_type == "steam_key":
-            from publisher import get_bot
+            from publisher import get_bot, send_with_retry
             from config import ADMIN_ID
             bot = get_bot()
 
             try:
-                await bot.send_message(
+                await send_with_retry(lambda: bot.send_message(
                     winner_id,
                     f"🎮 <b>Поздравляем! Ты выиграл {esc(giveaway['title'])}!</b>\n\n"
                     f"🔑 Твой ключ: <code>{esc(prize_value)}</code>\n\n"
@@ -320,14 +321,13 @@ async def award_prize(giveaway_id: str, winner_id: int) -> tuple[bool, str]:
                     f"3. Введи ключ\n\n"
                     f"Приятной игры! 🎉",
                     parse_mode="HTML",
-                )
+                ))
                 return True, "Ключ отправлен победителю"
             except Exception as send_err:
-                # Победитель не запускал бота — ключ не потерян, уведомляем админа
                 log.error(f"Не удалось отправить ключ победителю {winner_id}: {send_err}")
                 if ADMIN_ID:
                     try:
-                        await bot.send_message(
+                        await send_with_retry(lambda: bot.send_message(
                             ADMIN_ID,
                             f"🚨 <b>Проблема с розыгрышем!</b>\n\n"
                             f"🎮 Конкурс: <b>{esc(giveaway['title'])}</b>\n"
@@ -337,18 +337,16 @@ async def award_prize(giveaway_id: str, winner_id: int) -> tuple[bool, str]:
                             f"Выдай ключ вручную или перевыбери победителя командой "
                             f"/reroll_{giveaway_id}",
                             parse_mode="HTML",
-                        )
+                        ))
                     except Exception as admin_err:
                         log.error(f"Не удалось уведомить админа: {admin_err}")
-                # Помечаем в БД что приз не выдан
                 await pool.execute(
                     "UPDATE giveaways SET prize_delivery_status = 'failed' WHERE giveaway_id = $1",
                     giveaway_id,
                 )
                 return False, f"Ключ не доставлен: {send_err}"
-            
+
         elif prize_type == "points":
-            # Начисляем баллы
             points = int(prize_value)
             async with pool.acquire() as conn:
                 await conn.execute("""
@@ -357,44 +355,39 @@ async def award_prize(giveaway_id: str, winner_id: int) -> tuple[bool, str]:
                     ON CONFLICT (user_id) DO UPDATE
                     SET total_score = user_scores.total_score + $2
                 """, winner_id, points)
-            
-            from publisher import get_bot
+
+            from publisher import get_bot, send_with_retry
             bot = get_bot()
-            await bot.send_message(
+            await send_with_retry(lambda: bot.send_message(
                 winner_id,
                 f"🎉 <b>Поздравляем!</b>\n\n"
                 f"Ты выиграл <b>{points} баллов</b> в конкурсе!\n"
-                f"Потрать их в /shop"
-            )
+                f"Потрать их в /shop",
+                parse_mode="HTML",
+            ))
             return True, f"Начислено {points} баллов"
-            
+
         elif prize_type == "subscription":
-            # Выдаём подписку/приз из магазина напрямую, без списания баллов
             from database import get_pool as _get_pool
-            from datetime import timedelta
             _pool = await _get_pool()
             async with _pool.acquire() as _conn:
-                reward_row = await _conn.fetchrow(
-                    "SELECT * FROM user_rewards WHERE user_id = $1 AND reward_id = $2",
-                    winner_id, prize_value
-                )
-                if not reward_row:
-                    await _conn.execute("""
-                        INSERT INTO user_rewards (user_id, reward_id, is_active)
-                        VALUES ($1, $2, TRUE)
-                        ON CONFLICT DO NOTHING
-                    """, winner_id, prize_value)
+                await _conn.execute("""
+                    INSERT INTO user_rewards (user_id, reward_id, is_active)
+                    VALUES ($1, $2, TRUE)
+                    ON CONFLICT DO NOTHING
+                """, winner_id, prize_value)
 
-            from publisher import get_bot
+            from publisher import get_bot, send_with_retry
             bot = get_bot()
-            await bot.send_message(
+            await send_with_retry(lambda: bot.send_message(
                 winner_id,
                 f"🎉 <b>Поздравляем!</b>\n\n"
                 f"Ты выиграл приз в конкурсе!\n"
-                f"Проверь /myrewards"
-            )
+                f"Проверь /myrewards",
+                parse_mode="HTML",
+            ))
             return True, "Приз выдан"
-        
+
         else:
             return False, f"Неизвестный тип приза: {prize_type}"
             
@@ -406,12 +399,12 @@ async def award_prize(giveaway_id: str, winner_id: int) -> tuple[bool, str]:
 async def publish_giveaway(giveaway_id: str) -> Optional[int]:
     """
     Опубликовать конкурс в канале.
-    
+
     Returns:
         message_id опубликованного сообщения
     """
     from database import get_pool
-    from publisher import get_bot
+    from publisher import get_bot, send_with_retry
     from config import CHANNEL_ID
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     
@@ -461,13 +454,16 @@ async def publish_giveaway(giveaway_id: str) -> Optional[int]:
         )]
     ])
     
+    from publisher import get_bot, send_with_retry
+    from config import CHANNEL_ID
+
     bot = get_bot()
     try:
-        msg = await bot.send_message(
+        msg = await send_with_retry(lambda: bot.send_message(
             CHANNEL_ID,
             text,
-            reply_markup=keyboard
-        )
+            reply_markup=keyboard,
+        ))
         
         # Сохраняем message_id
         await pool.execute("""
@@ -486,28 +482,39 @@ async def publish_giveaway(giveaway_id: str) -> Optional[int]:
 async def end_giveaway(giveaway_id: str) -> bool:
     """
     Завершить конкурс, выбрать победителя и выдать приз.
-    
+
     Returns:
         True если успешно
     """
     from database import get_pool
-    from publisher import get_bot
+    from publisher import get_bot, send_with_retry
     from config import CHANNEL_ID
-    
+
     pool = await get_pool()
+
+    # Атомарно переводим статус active → ending, чтобы исключить двойной запуск
+    updated = await pool.fetchval("""
+        UPDATE giveaways SET status = 'ending'
+        WHERE giveaway_id = $1 AND status = 'active'
+        RETURNING giveaway_id
+    """, giveaway_id)
+
+    if not updated:
+        log.warning(f"Конкурс {giveaway_id} уже завершается или завершён — пропускаем")
+        return False
+
     giveaway = await pool.fetchrow(
         "SELECT * FROM giveaways WHERE giveaway_id = $1", giveaway_id
     )
-    
+
     if not giveaway:
         log.error(f"Конкурс {giveaway_id} не найден")
         return False
-    
+
     # Выбираем победителя
     winner_id = await select_winner(giveaway_id)
-    
+
     if not winner_id:
-        # Нет участников — всё равно завершаем конкурс
         await pool.execute(
             "UPDATE giveaways SET status = 'ended' WHERE giveaway_id = $1",
             giveaway_id,
@@ -515,32 +522,47 @@ async def end_giveaway(giveaway_id: str) -> bool:
         bot = get_bot()
         if bot and giveaway["channel_post_id"]:
             try:
-                await bot.edit_message_text(
-                    f"🎁 <b>Розыгрыш завершён</b>\n\n"
-                    f"❌ Нет участников",
+                await send_with_retry(lambda: bot.edit_message_text(
+                    "🎁 <b>Розыгрыш завершён</b>\n\n❌ Нет участников",
                     CHANNEL_ID,
-                    giveaway["channel_post_id"]
-                )
+                    giveaway["channel_post_id"],
+                    parse_mode="HTML",
+                ))
             except Exception:
                 pass
         return False
-    
+
+    # Проверяем что winner_id — реальный пользователь, а не канал/группа
+    # Telegram user_id всегда положительный и < 10^10 для обычных пользователей
+    if winner_id <= 0:
+        log.error(f"Некорректный winner_id={winner_id} для конкурса {giveaway_id}")
+        await pool.execute(
+            "UPDATE giveaways SET status = 'ended' WHERE giveaway_id = $1", giveaway_id
+        )
+        return False
+
+    # Сохраняем победителя и ставим статус ended
+    await pool.execute(
+        "UPDATE giveaways SET winner_user_id = $2, status = 'ended' WHERE giveaway_id = $1",
+        giveaway_id, winner_id,
+    )
+
     # Выдаём приз
-    success, msg = await award_prize(giveaway_id, winner_id)
-    
-    # Объявляем победителя в канале
+    success, prize_msg = await award_prize(giveaway_id, winner_id)
+
+    # Объявляем победителя в канале (без ключа — только имя)
     bot = get_bot()
     try:
-        # Получаем информацию о победителе
         winner = await bot.get_chat(winner_id)
-        winner_name = winner.first_name
+        winner_name = winner.first_name or str(winner_id)
         if winner.username:
             winner_mention = f"@{winner.username}"
         else:
             winner_mention = f'<a href="tg://user?id={winner_id}">{esc(winner_name)}</a>'
-        
+
         participants_count = len(await get_giveaway_participants(giveaway_id))
-        
+
+        # В канале — только поздравление БЕЗ ключа
         announcement = (
             f"🎉 <b>Розыгрыш завершён!</b>\n\n"
             f"🎮 <b>{esc(giveaway['title'])}</b>\n\n"
@@ -548,35 +570,36 @@ async def end_giveaway(giveaway_id: str) -> bool:
             f"👥 Участников: {participants_count}\n\n"
             f"Поздравляем! 🎊"
         )
-        
+
         if giveaway["channel_post_id"]:
-            await bot.edit_message_text(
-                announcement,
-                CHANNEL_ID,
-                giveaway["channel_post_id"]
-            )
+            await send_with_retry(lambda: bot.edit_message_text(
+                announcement, CHANNEL_ID, giveaway["channel_post_id"],
+                parse_mode="HTML",
+            ))
         else:
-            await bot.send_message(CHANNEL_ID, announcement)
-        
+            await send_with_retry(lambda: bot.send_message(
+                CHANNEL_ID, announcement, parse_mode="HTML"
+            ))
+
         log.info(f"Конкурс {giveaway_id} завершён, победитель: {winner_id}")
 
-        # Алерт админу
         try:
             from config import ADMIN_ID
             if ADMIN_ID:
-                await bot.send_message(
+                await send_with_retry(lambda: bot.send_message(
                     ADMIN_ID,
                     f"✅ <b>Конкурс завершён!</b>\n\n"
                     f"🎮 {esc(giveaway['title'])}\n"
-                    f"🏆 Победитель: {winner_mention}\n"
+                    f"🏆 Победитель: {winner_mention} (<code>{winner_id}</code>)\n"
                     f"👥 Участников: {participants_count}\n"
-                    f"📦 Приз отправлен: {'✅' if success else '❌ ' + msg}"
-                )
+                    f"📦 Приз: {'✅ отправлен' if success else '❌ ' + prize_msg}",
+                    parse_mode="HTML",
+                ))
         except Exception as e:
             log.warning(f"Не удалось отправить алерт админу: {e}")
 
         return True
-        
+
     except Exception as e:
         log.error(f"Ошибка объявления победителя: {e}")
         return False
@@ -598,6 +621,7 @@ async def check_giveaway_reminders():
           AND giveaway_id NOT LIKE 'giveaway_test_%'
     """)
 
+    from publisher import get_bot, send_with_retry
     bot = get_bot()
     for giveaway in rows:
         try:
@@ -616,7 +640,9 @@ async def check_giveaway_reminders():
                     callback_data=f"giveaway_join:{giveaway['giveaway_id']}"
                 )]
             ])
-            await bot.send_message(CHANNEL_ID, text, reply_markup=keyboard)
+            await send_with_retry(lambda t=text, kb=keyboard: bot.send_message(
+                CHANNEL_ID, t, reply_markup=kb, parse_mode="HTML"
+            ))
             await pool.execute(
                 "UPDATE giveaways SET reminder_sent = TRUE WHERE giveaway_id = $1",
                 giveaway["giveaway_id"]

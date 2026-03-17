@@ -314,15 +314,16 @@ async def callback_giveaway_join(callback: CallbackQuery):
                 ])
                 
                 from config import CHANNEL_ID
-                from publisher import get_bot
+                from publisher import get_bot, send_with_retry
                 bot = get_bot()
                 
-                await bot.edit_message_text(
-                    updated_text,
+                await send_with_retry(lambda t=updated_text, kb=keyboard: bot.edit_message_text(
+                    t,
                     CHANNEL_ID,
                     giveaway["channel_post_id"],
-                    reply_markup=keyboard
-                )
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                ))
         except Exception as e:
             log.warning(f"Не удалось обновить счётчик: {e}")
         

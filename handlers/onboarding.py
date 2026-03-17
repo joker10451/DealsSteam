@@ -15,7 +15,7 @@ from onboarding import (
     format_tutorial_message, create_tutorial_keyboard,
     get_onboarding_progress, RESTART_MESSAGE
 )
-from referral import check_and_apply_referral
+from referral import check_and_apply_referral, ensure_referral_code_registered
 from publisher import send_with_retry, get_bot
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,10 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     
     try:
+        # Регистрируем код пользователя в БД при каждом /start
+        # чтобы его реферальная ссылка всегда работала
+        await ensure_referral_code_registered(user_id)
+
         # Проверяем, новый ли пользователь
         new_user = await is_new_user(user_id)
         

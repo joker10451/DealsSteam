@@ -153,11 +153,7 @@ async def publish_daily_challenge():
     
     # Публикуем в канал
     try:
-        await send_with_retry(
-            bot.send_message,
-            chat_id=CHANNEL_ID,
-            text=text,
-        )
+        await send_with_retry(lambda: bot.send_message(CHANNEL_ID, text))
         log.info("Челлендж дня опубликован в канал")
     except Exception as e:
         log.error(f"Ошибка публикации челленджа: {e}")

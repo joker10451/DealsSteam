@@ -525,12 +525,12 @@ async def publish_screenshot_game(deal, igdb_info):
     )
     
     try:
-        await get_bot().send_photo(
+        await send_with_retry(lambda: get_bot().send_photo(
             CHANNEL_ID,
             photo=screenshot_url,
             caption=caption,
-            reply_markup=keyboard
-        )
+            reply_markup=keyboard,
+        ))
         log.info(f"Опубликована игра со скриншотом: {deal.title}")
     except Exception as e:
         log.warning(f"Игра со скриншотом не отправлена: {e}")

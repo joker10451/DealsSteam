@@ -807,13 +807,14 @@ async def confirm_buy_callback(callback: CallbackQuery):
 @router.message(Command("invite"))
 async def cmd_invite(message: Message):
     """Показать реферальную ссылку и статистику."""
-    from referral import get_referral_stats, format_referral_message
-    from config import BOT_TOKEN
+    from referral import get_referral_stats, format_referral_message, ensure_referral_code_registered
     
     user_id = message.from_user.id
     
-    # Получаем username бота из токена
     bot_username = (await message.bot.get_me()).username
+    
+    # Регистрируем код в БД, чтобы его можно было декодировать
+    await ensure_referral_code_registered(user_id)
     
     stats = await get_referral_stats(user_id)
     text = format_referral_message(user_id, bot_username, stats)

@@ -260,9 +260,11 @@ async def post_weekly_digest():
 
     lines += ["", "━" * 20, "👾 Следи за каналом — новые скидки каждый день!"]
 
-    from publisher import get_bot
+    from publisher import get_bot, send_with_retry
     try:
-        await get_bot().send_message(CHANNEL_ID, "\n".join(lines), disable_web_page_preview=True)
+        await send_with_retry(lambda: get_bot().send_message(
+            CHANNEL_ID, "\n".join(lines), disable_web_page_preview=True
+        ))
         log.info("Еженедельный дайджест опубликован.")
     except Exception as e:
         log.error(f"Ошибка при отправке дайджеста: {e}")

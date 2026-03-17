@@ -38,11 +38,18 @@ async def init_referral_table():
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_referrals_referee ON referrals(referee_id)
         """)
+        # Таблица для быстрого поиска кода → user_id
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS referral_codes (
+                code TEXT PRIMARY KEY,
+                user_id BIGINT NOT NULL UNIQUE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
 
 
 def generate_referral_code(user_id: int) -> str:
     """Генерирует уникальный реферальный код для пользователя."""
-    # Используем хеш для создания короткого кода
     hash_input = f"{user_id}_gamedeals_bot"
     hash_obj = hashlib.md5(hash_input.encode())
     return hash_obj.hexdigest()[:8].upper()
@@ -54,98 +61,103 @@ def get_referral_link(user_id: int, bot_username: str) -> str:
     return f"https://t.me/{bot_username}?start=ref_{code}"
 
 
-async def decode_referral_code(code: str) -> Optional[int]:
-    """Декодирует реферальный код в user_id через прямой поиск по хешу."""
-    if not code or len(code) != 8:
-        return None
-    # Ищем только среди пользователей у которых есть запись в user_scores
-    # Ограничиваем выборку последними 10000 активными пользователями
+async def ensure_referral_code_registered(user_id: int) -> str:
+    """Гарантирует, что код пользователя сохранён в БД. Возвращает код."""
+    code = generate_referral_code(user_id)
     pool = await get_pool()
     async with pool.acquire() as conn:
-        users = await conn.fetch("""
-            SELECT user_id FROM user_scores
-            ORDER BY created_at DESC LIMIT 10000
-        """)
-        for user in users:
-            user_id = user["user_id"]
-            if generate_referral_code(user_id) == code.upper():
-                return user_id
-    return None
+        await conn.execute("""
+            INSERT INTO referral_codes (code, user_id)
+            VALUES ($1, $2)
+            ON CONFLICT DO NOTHING
+        """, code, user_id)
+    return code
+
+
+async def decode_referral_code(code: str) -> Optional[int]:
+    """Декодирует реферальный код в user_id через таблицу referral_codes."""
+    if not code or len(code) != 8:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        user_id = await conn.fetchval(
+            "SELECT user_id FROM referral_codes WHERE code = $1",
+            code.upper()
+        )
+    return user_id
 
 
 async def register_referral(referrer_id: int, referee_id: int) -> dict:
     """Регистрирует нового реферала и начисляет бонусы."""
     if referrer_id == referee_id:
         return {"error": "Нельзя пригласить самого себя!"}
-    
+
     pool = await get_pool()
+
+    # Проверяем, не новый ли это пользователь (нет записи онбординга)
+    from database import get_onboarding_progress
+    onboarding = await get_onboarding_progress(referee_id)
+    if onboarding is not None:
+        return {"error": "Реферальная ссылка работает только для новых пользователей"}
+
     async with pool.acquire() as conn:
-        # Проверяем, не был ли пользователь уже приглашён
-        existing = await conn.fetchval("""
-            SELECT referrer_id FROM referrals WHERE referee_id = $1
-        """, referee_id)
-        
-        if existing:
-            return {"error": "Ты уже был приглашён другим пользователем"}
+        async with conn.transaction():
+            # Лимит: один реферер не может пригласить более 50 человек
+            referrer_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM referrals WHERE referrer_id = $1", referrer_id
+            ) or 0
+            if referrer_count >= 50:
+                return {"error": "Достигнут лимит приглашений"}
 
-        # Лимит: один реферер не может пригласить более 50 человек
-        referrer_count = await conn.fetchval("""
-            SELECT COUNT(*) FROM referrals WHERE referrer_id = $1
-        """, referrer_id)
-        if referrer_count and referrer_count >= 50:
-            return {"error": "Достигнут лимит приглашений"}
+            # Атомарная вставка — UNIQUE(referee_id) защищает от дублей и гонок
+            inserted = await conn.fetchval("""
+                INSERT INTO referrals (referrer_id, referee_id, bonus_paid)
+                VALUES ($1, $2, TRUE)
+                ON CONFLICT (referee_id) DO NOTHING
+                RETURNING id
+            """, referrer_id, referee_id)
 
-        # Проверяем, не новый ли это пользователь (нет записи онбординга)
-        from database import get_onboarding_progress
-        onboarding = await get_onboarding_progress(referee_id)
-        if onboarding is not None:
-            return {"error": "Реферальная ссылка работает только для новых пользователей"}
-        
-        # Регистрируем реферала и сразу помечаем бонус как выплаченный
-        await conn.execute("""
-            INSERT INTO referrals (referrer_id, referee_id, bonus_paid)
-            VALUES ($1, $2, TRUE)
-        """, referrer_id, referee_id)
-        
-        # Начисляем бонусы рефереру
-        await conn.execute("""
-            INSERT INTO user_scores (user_id, total_score)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id) DO UPDATE
-            SET total_score = user_scores.total_score + $2
-        """, referrer_id, REFERRER_BONUS)
-        
-        # Начисляем бонусы новому пользователю
-        await conn.execute("""
-            INSERT INTO user_scores (user_id, total_score)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id) DO UPDATE
-            SET total_score = user_scores.total_score + $2
-        """, referee_id, REFEREE_BONUS)
-        
-        log.info(f"Реферал зарегистрирован: {referrer_id} пригласил {referee_id}")
+            if not inserted:
+                return {"error": "Ты уже был приглашён другим пользователем"}
 
-        # Читаем новый баланс реферера в том же соединении
-        new_balance = await conn.fetchval(
-            "SELECT total_score FROM user_scores WHERE user_id = $1", referrer_id
-        ) or REFERRER_BONUS
+            # Начисляем бонусы рефереру
+            await conn.execute("""
+                INSERT INTO user_scores (user_id, total_score)
+                VALUES ($1, $2)
+                ON CONFLICT (user_id) DO UPDATE
+                SET total_score = user_scores.total_score + $2
+            """, referrer_id, REFERRER_BONUS)
 
-    # Отправляем уведомление рефереру с актуальным балансом
+            # Начисляем бонусы новому пользователю
+            await conn.execute("""
+                INSERT INTO user_scores (user_id, total_score)
+                VALUES ($1, $2)
+                ON CONFLICT (user_id) DO UPDATE
+                SET total_score = user_scores.total_score + $2
+            """, referee_id, REFEREE_BONUS)
+
+            log.info(f"Реферал зарегистрирован: {referrer_id} пригласил {referee_id}")
+
+            new_balance = await conn.fetchval(
+                "SELECT total_score FROM user_scores WHERE user_id = $1", referrer_id
+            ) or REFERRER_BONUS
+
+    # Уведомляем реферера
     try:
-        from publisher import get_bot
+        from publisher import get_bot, send_with_retry
         bot = get_bot()
         if bot:
-            await bot.send_message(
+            await send_with_retry(lambda: bot.send_message(
                 referrer_id,
                 f"✅ <b>Твой друг подписался!</b>\n\n"
                 f"Тебе начислено <b>+{REFERRER_BONUS}</b> баллов.\n"
                 f"Твой баланс: <b>{new_balance}</b> ⭐\n\n"
                 f"Продолжай приглашать друзей: /invite",
                 parse_mode="HTML",
-            )
+            ))
     except Exception as e:
         log.warning(f"Не удалось отправить уведомление рефереру {referrer_id}: {e}")
-    
+
     return {
         "success": True,
         "referrer_bonus": REFERRER_BONUS,
@@ -257,7 +269,8 @@ async def broadcast_referral_announcement(bot_username: str) -> dict:
     Возвращает статистику: sent, failed.
     """
     import asyncio
-    from publisher import get_bot
+    from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
+    from publisher import get_bot, send_with_retry
     from database import get_pool
 
     bot = get_bot()
@@ -274,6 +287,8 @@ async def broadcast_referral_announcement(bot_username: str) -> dict:
 
     for row in users:
         user_id = row["user_id"]
+        # Регистрируем код в БД, чтобы ссылка из рассылки работала
+        await ensure_referral_code_registered(user_id)
         link = get_referral_link(user_id, bot_username)
         text = (
             "🔥 <b>Новая фича: Зарабатывай баллы за друзей!</b>\n\n"
@@ -289,9 +304,14 @@ async def broadcast_referral_announcement(bot_username: str) -> dict:
             f"<b>Твоя ссылка:</b>\n<code>{link}</code>"
         )
         try:
-            await bot.send_message(user_id, text, parse_mode="HTML")
+            await send_with_retry(lambda uid=user_id, t=text: bot.send_message(
+                uid, t, parse_mode="HTML"
+            ))
             sent += 1
             await asyncio.sleep(0.05)
+        except TelegramForbiddenError:
+            log.info(f"Пользователь {user_id} заблокировал бота, пропускаем")
+            failed += 1
         except Exception as e:
             log.warning(f"Не удалось отправить анонс пользователю {user_id}: {e}")
             failed += 1
