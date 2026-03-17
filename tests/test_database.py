@@ -9,6 +9,7 @@ Property-тесты (3.2): Properties 7–12 через hypothesis.
 - Тестовые user_id >= 9_000_000_000
 - Фикстура db_cleanup удаляет все тестовые данные после каждого теста
 """
+import json
 import uuid
 import pytest
 import asyncpg
@@ -179,7 +180,8 @@ async def test_price_game_round_trip():
     try:
         await database.save_price_game(deal_id, price)
         result = await database.get_price_game(deal_id)
-        assert result == price
+        assert result is not None
+        assert result["original_price"] == price
     finally:
         await _delete_deal(deal_id)
 
@@ -313,7 +315,9 @@ def test_property_price_game_round_trip(price):
         deal_id = _uid()
         try:
             await database.save_price_game(deal_id, price)
-            assert await database.get_price_game(deal_id) == price
+            result = await database.get_price_game(deal_id)
+            assert result is not None
+            assert result["original_price"] == price
         finally:
             await _delete_deal(deal_id)
     _run(_inner())
@@ -1172,8 +1176,8 @@ async def test_price_cache_get_expired():
         # Вставляем запись с датой старше 6 часов
         old_ts = datetime.now(timezone.utc) - timedelta(hours=7)
         await pool.execute(
-            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2, $3)",
-            game_title, prices, old_ts,
+            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2::jsonb, $3)",
+            game_title, json.dumps(prices), old_ts,
         )
         
         # Пытаемся получить из кеша
@@ -1198,8 +1202,8 @@ async def test_price_cache_get_fresh():
         # Вставляем запись с датой 5 часов назад (свежая)
         fresh_ts = datetime.now(timezone.utc) - timedelta(hours=5)
         await pool.execute(
-            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2, $3)",
-            game_title, prices, fresh_ts,
+            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2::jsonb, $3)",
+            game_title, json.dumps(prices), fresh_ts,
         )
         
         # Получаем из кеша
@@ -1273,15 +1277,15 @@ async def test_price_cache_cleanup():
         # Вставляем старую запись (7 часов назад)
         old_ts = datetime.now(timezone.utc) - timedelta(hours=7)
         await pool.execute(
-            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2, $3)",
-            game_title_old, prices, old_ts,
+            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2::jsonb, $3)",
+            game_title_old, json.dumps(prices), old_ts,
         )
         
         # Вставляем свежую запись (5 часов назад)
         fresh_ts = datetime.now(timezone.utc) - timedelta(hours=5)
         await pool.execute(
-            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2, $3)",
-            game_title_fresh, prices, fresh_ts,
+            "INSERT INTO price_cache (game_title, prices, cached_at) VALUES ($1, $2::jsonb, $3)",
+            game_title_fresh, json.dumps(prices), fresh_ts,
         )
         
         # Вызываем cleanup

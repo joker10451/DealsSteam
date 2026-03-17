@@ -150,7 +150,9 @@ async def test_get_user_registration_date(test_user_id, db_cleanup_onboarding):
     assert hasattr(reg_date, 'day')
 
 
-async def test_get_user_registration_date_nonexistent(test_user_id):
+async def test_get_user_registration_date_nonexistent():
     """Test getting registration date for user without record."""
-    reg_date = await get_user_registration_date(test_user_id)
+    # Используем заведомо несуществующий ID (вне диапазона тестовых пользователей)
+    nonexistent_user_id = 9_999_999_999
+    reg_date = await get_user_registration_date(nonexistent_user_id)
     assert reg_date is None

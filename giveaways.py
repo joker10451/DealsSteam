@@ -98,6 +98,7 @@ async def create_giveaway(
     duration_hours: int = 72,
     require_channel_sub: bool = True,
     min_account_age_days: int = 7,
+    _test: bool = False,
 ) -> str:
     """
     Создать новый конкурс.
@@ -110,6 +111,7 @@ async def create_giveaway(
         duration_hours: Длительность в часах (по умолчанию 72 = 3 дня)
         require_channel_sub: Требовать подписку на канал
         min_account_age_days: Минимальный возраст аккаунта в днях
+        _test: Если True — ID получает префикс giveaway_test_ (не попадёт в планировщик)
         
     Returns:
         giveaway_id созданного конкурса
@@ -118,7 +120,9 @@ async def create_giveaway(
     
     now = datetime.now(MSK)
     end_time = now + timedelta(hours=duration_hours)
-    giveaway_id = f"giveaway_{int(now.timestamp())}"
+    import uuid as _uuid
+    prefix = "giveaway_test" if _test else "giveaway"
+    giveaway_id = f"{prefix}_{int(now.timestamp())}_{_uuid.uuid4().hex[:6]}"
     
     pool = await get_pool()
     await pool.execute("""
@@ -155,14 +159,19 @@ async def join_giveaway(giveaway_id: str, user_id: int) -> tuple[bool, str]:
     if giveaway["status"] != "active":
         return False, "Конкурс уже завершён"
     
-    if datetime.now(MSK) > giveaway["end_time"].replace(tzinfo=MSK):
+    # Сравниваем aware datetimes напрямую (asyncpg возвращает TIMESTAMPTZ как UTC-aware)
+    end_time = giveaway["end_time"]
+    if end_time.tzinfo is None:
+        end_time = end_time.replace(tzinfo=MSK)
+    if datetime.now(MSK) > end_time:
         return False, "Конкурс уже завершён"
     
     # Проверяем возраст аккаунта
     if giveaway["min_account_age_days"] > 0:
         reg_date = await get_user_registration_date(user_id)
         if reg_date:
-            account_age = (datetime.now(MSK) - reg_date.replace(tzinfo=MSK)).days
+            reg_aware = reg_date if reg_date.tzinfo else reg_date.replace(tzinfo=MSK)
+            account_age = (datetime.now(MSK) - reg_aware).days
             if account_age < giveaway["min_account_age_days"]:
                 return False, f"Аккаунт должен быть старше {giveaway['min_account_age_days']} дней"
     
@@ -458,9 +467,13 @@ async def end_giveaway(giveaway_id: str) -> bool:
     winner_id = await select_winner(giveaway_id)
     
     if not winner_id:
-        # Нет участников
+        # Нет участников — всё равно завершаем конкурс
+        await pool.execute(
+            "UPDATE giveaways SET status = 'ended' WHERE giveaway_id = $1",
+            giveaway_id,
+        )
         bot = get_bot()
-        if giveaway["channel_post_id"]:
+        if bot and giveaway["channel_post_id"]:
             try:
                 await bot.edit_message_text(
                     f"🎁 <b>Розыгрыш завершён</b>\n\n"
@@ -542,6 +555,7 @@ async def check_giveaway_reminders():
         WHERE status = 'active'
           AND end_time BETWEEN NOW() + INTERVAL '50 minutes' AND NOW() + INTERVAL '70 minutes'
           AND reminder_sent = FALSE
+          AND giveaway_id NOT LIKE 'giveaway_test_%'
     """)
 
     bot = get_bot()

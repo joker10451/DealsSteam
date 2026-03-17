@@ -584,7 +584,9 @@ async def get_user_registration_date(user_id: int):
             FROM (SELECT created_at FROM onboarding_progress WHERE user_id = $1) op
             FULL OUTER JOIN (SELECT created_at FROM user_scores WHERE user_id = $1) us ON TRUE
         """, user_id)
-        return row["earliest"] if row else None
+        if not row or row["earliest"] is None:
+            return None
+        return row["earliest"]
     except Exception as e:
         import logging
         log = logging.getLogger(__name__)
@@ -900,7 +902,13 @@ async def price_cache_get(game_title: str) -> dict | None:
         "WHERE game_title = $1 AND cached_at >= NOW() - INTERVAL '6 hours'",
         game_title,
     )
-    return dict(row) if row else None
+    if not row:
+        return None
+    import json
+    result = dict(row)
+    if isinstance(result.get("prices"), str):
+        result["prices"] = json.loads(result["prices"])
+    return result
 
 
 async def price_cache_set(game_title: str, prices: dict):
@@ -911,12 +919,13 @@ async def price_cache_set(game_title: str, prices: dict):
         game_title: Game title as cache key
         prices: Dict with price data to cache (will be stored as JSONB)
     """
+    import json
     pool = await get_pool()
     await pool.execute(
         "INSERT INTO price_cache (game_title, prices, cached_at) "
-        "VALUES ($1, $2, NOW()) "
-        "ON CONFLICT (game_title) DO UPDATE SET prices = $2, cached_at = NOW()",
-        game_title, prices,
+        "VALUES ($1, $2::jsonb, NOW()) "
+        "ON CONFLICT (game_title) DO UPDATE SET prices = $2::jsonb, cached_at = NOW()",
+        game_title, json.dumps(prices),
     )
 
 
