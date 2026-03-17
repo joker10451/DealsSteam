@@ -190,9 +190,7 @@ async def post_giveaway_to_vk(title: str, description: str, end_str: str, channe
             f"📅 Конец розыгрыша: {end_str}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"✅ Участвовать — только в Telegram:\n"
-            f"👉 {tg_link}\n\n"
-            f"🎮 Больше скидок и раздач:\n"
-            f"👉 {TG_CHANNEL_LINK}"
+            f"👉 {tg_link}"
         )
 
         result = await _vk_request("wall.post", {
