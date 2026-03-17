@@ -86,6 +86,10 @@ async def init_giveaways_db():
         await conn.execute(
             "ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE"
         )
+        # Миграция: статус доставки приза
+        await conn.execute(
+            "ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS prize_delivery_status TEXT DEFAULT 'pending'"
+        )
     
     log.info("Таблицы конкурсов инициализированы")
 
@@ -295,21 +299,47 @@ async def award_prize(giveaway_id: str, winner_id: int) -> tuple[bool, str]:
     
     try:
         if prize_type == "steam_key":
-            # Выдаём Steam ключ
             from publisher import get_bot
+            from config import ADMIN_ID
             bot = get_bot()
-            
-            await bot.send_message(
-                winner_id,
-                f"🎮 <b>Поздравляем! Ты выиграл {esc(giveaway['title'])}!</b>\n\n"
-                f"🔑 Твой ключ: <code>{esc(prize_value)}</code>\n\n"
-                f"Активируй его в Steam:\n"
-                f"1. Открой Steam\n"
-                f"2. Игры → Активировать продукт\n"
-                f"3. Введи ключ\n\n"
-                f"Приятной игры! 🎉"
-            )
-            return True, "Ключ отправлен победителю"
+
+            try:
+                await bot.send_message(
+                    winner_id,
+                    f"🎮 <b>Поздравляем! Ты выиграл {esc(giveaway['title'])}!</b>\n\n"
+                    f"🔑 Твой ключ: <code>{esc(prize_value)}</code>\n\n"
+                    f"Активируй его в Steam:\n"
+                    f"1. Открой Steam\n"
+                    f"2. Игры → Активировать продукт\n"
+                    f"3. Введи ключ\n\n"
+                    f"Приятной игры! 🎉",
+                    parse_mode="HTML",
+                )
+                return True, "Ключ отправлен победителю"
+            except Exception as send_err:
+                # Победитель не запускал бота — ключ не потерян, уведомляем админа
+                log.error(f"Не удалось отправить ключ победителю {winner_id}: {send_err}")
+                if ADMIN_ID:
+                    try:
+                        await bot.send_message(
+                            ADMIN_ID,
+                            f"🚨 <b>Проблема с розыгрышем!</b>\n\n"
+                            f"🎮 Конкурс: <b>{esc(giveaway['title'])}</b>\n"
+                            f"👤 Победитель: <code>{winner_id}</code>\n"
+                            f"❌ Причина: победитель не запускал бота\n\n"
+                            f"🔑 Ключ: <code>{esc(prize_value)}</code>\n\n"
+                            f"Выдай ключ вручную или перевыбери победителя командой "
+                            f"/reroll_{giveaway_id}",
+                            parse_mode="HTML",
+                        )
+                    except Exception as admin_err:
+                        log.error(f"Не удалось уведомить админа: {admin_err}")
+                # Помечаем в БД что приз не выдан
+                await pool.execute(
+                    "UPDATE giveaways SET prize_delivery_status = 'failed' WHERE giveaway_id = $1",
+                    giveaway_id,
+                )
+                return False, f"Ключ не доставлен: {send_err}"
             
         elif prize_type == "points":
             # Начисляем баллы
