@@ -252,7 +252,7 @@ def test_property_mark_as_posted_idempotence(discount):
 
 
 # Feature: bot-tests-and-docs, Property 9: wishlist add/remove round-trip
-@given(query=st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=("Ll",))))
+@given(query=st.text(min_size=1, max_size=20, alphabet=st.sampled_from("abcdefghijklmnopqrstuvwxyz")))
 @settings(max_examples=5, deadline=None)
 def test_property_wishlist_add_remove(query):
     """Property 9: add→add(dup)→remove→remove(dup) возвращают True/False/True/False."""

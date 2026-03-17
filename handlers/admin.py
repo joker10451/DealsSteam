@@ -844,6 +844,37 @@ async def cmd_test_game(message: Message):
         )
 
 
+@router.message(Command("cleantestgiveaways"))
+async def cmd_clean_test_giveaways(message: Message):
+    """Удалить все тестовые розыгрыши из БД (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    from database import get_pool
+    from giveaways import delete_giveaway
+
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT giveaway_id, title FROM giveaways WHERE title ILIKE '%test%' OR title ILIKE '%тест%'"
+    )
+
+    if not rows:
+        await message.answer("✅ Тестовых розыгрышей не найдено.")
+        return
+
+    deleted = []
+    for row in rows:
+        ok, _ = await delete_giveaway(row["giveaway_id"])
+        if ok:
+            deleted.append(row["title"])
+
+    await message.answer(
+        f"✅ Удалено {len(deleted)} тестовых розыгрышей:\n" +
+        "\n".join(f"• {esc(t)}" for t in deleted)
+    )
+
+
 @router.message(Command("vkgiveaway"))
 async def cmd_vk_giveaway(message: Message):
     """Опубликовать активный розыгрыш в группу ВК (только админ)."""
