@@ -231,8 +231,7 @@ def format_referral_message(user_id: int, bot_username: str, stats: dict) -> str
         f"3. Ты получаешь <b>+{REFERRER_BONUS}</b> баллов",
         f"4. Друг получает <b>+{REFEREE_BONUS}</b> баллов\n",
         f"<b>Твоя реферальная ссылка:</b>",
-        f'<a href="{link}">👉 Нажми чтобы скопировать</a>\n',
-        f"Или скопируй вручную:",
+        f"👇 Нажми на ссылку ниже — она скопируется:",
         f"<code>{link}</code>",
     ]
     

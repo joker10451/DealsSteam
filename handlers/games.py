@@ -819,11 +819,18 @@ async def cmd_invite(message: Message):
     stats = await get_referral_stats(user_id)
     text = format_referral_message(user_id, bot_username, stats)
     
+    from referral import get_referral_link
+    link = get_referral_link(user_id, bot_username)
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="📤 Поделиться ссылкой",
+            switch_inline_query=f"Присоединяйся к боту со скидками на игры! {link}"
+        )],
         [InlineKeyboardButton(text="📊 Топ рефереров", callback_data="show_top_referrers")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="show_profile")]
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="show_profile")],
     ])
-    
+
     await message.answer(text, reply_markup=keyboard)
 
 
