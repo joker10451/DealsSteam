@@ -6,6 +6,8 @@ import pytz
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.types import ChatMemberUpdated
+from aiogram.filters import ChatMemberUpdatedFilter, IS_MEMBER, IS_NOT_MEMBER
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -34,6 +36,20 @@ MSK = pytz.timezone("Europe/Moscow")
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
+
+
+@dp.chat_member(ChatMemberUpdatedFilter(IS_MEMBER >> IS_NOT_MEMBER))
+async def on_user_left_channel(event: ChatMemberUpdated):
+    """Удалить пользователя из активных розыгрышей при выходе из канала."""
+    # Реагируем только на события в нашем канале
+    if str(event.chat.id) != str(CHANNEL_ID):
+        return
+    user_id = event.old_chat_member.user.id
+    try:
+        from giveaways import remove_participant_from_all_giveaways
+        await remove_participant_from_all_giveaways(user_id)
+    except Exception as e:
+        log.error(f"Ошибка удаления {user_id} из розыгрышей: {e}")
 
 
 @dp.errors()
@@ -132,6 +148,7 @@ async def main():
         BotCommand(command="tip", description="Опубликовать совет дня"),
         BotCommand(command="coop", description="Опубликовать кооп-дайджест"),
         BotCommand(command="testgame", description="Тест мини-игр в личку"),
+        BotCommand(command="testvk", description="Тестовый пост в ВК"),
     ]
 
     await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
@@ -263,7 +280,7 @@ async def main():
     log.info("Бот запущен.")
 
     try:
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, allowed_updates=["message", "callback_query", "chat_member", "inline_query", "chosen_inline_result"])
     finally:
         await close_session()
 

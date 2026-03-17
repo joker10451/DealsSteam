@@ -842,3 +842,63 @@ async def cmd_test_game(message: Message):
             "✅ Игра «Угадай цену» отправлена в личку.\n"
             "⚠️ Скриншот-игра недоступна — нет данных IGDB для этой игры."
         )
+
+
+@router.message(Command("testvk"))
+async def cmd_test_vk(message: Message):
+    """Отправить тестовый пост в группу ВК (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    status_msg = await message.answer("🔄 Публикую тестовый пост в ВК...")
+
+    from database import get_pool
+    from vk_publisher import post_deal_to_vk, VK_ENABLED, VK_GROUP_ID
+    from parsers.steam import Deal
+
+    if not VK_ENABLED:
+        await status_msg.edit_text("❌ VK_ENABLED=false. Включи в переменных окружения.")
+        return
+    if not VK_GROUP_ID:
+        await status_msg.edit_text("❌ VK_GROUP_ID не задан.")
+        return
+
+    # Берём последний опубликованный deal
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT deal_id, title, store, discount, link FROM posted_deals ORDER BY posted_at DESC LIMIT 1"
+    )
+
+    if row:
+        deal = Deal(
+            deal_id=row["deal_id"],
+            title=row["title"],
+            store=row["store"],
+            old_price="1000 ₽",
+            new_price=f"{int(1000 * (1 - row['discount'] / 100))} ₽",
+            discount=row["discount"],
+            link=row["link"],
+        )
+    else:
+        # Фиктивный deal если БД пустая
+        deal = Deal(
+            deal_id="test_vk_1",
+            title="Тестовая игра",
+            store="Steam",
+            old_price="999 ₽",
+            new_price="199 ₽",
+            discount=80,
+            link="https://store.steampowered.com",
+        )
+
+    ok = await post_deal_to_vk(deal)
+    if ok:
+        await status_msg.edit_text(
+            f"✅ Пост опубликован в ВК!\n"
+            f"🔗 https://vk.com/club{VK_GROUP_ID}"
+        )
+    else:
+        await status_msg.edit_text(
+            "❌ Ошибка публикации в ВК. Проверь логи — возможно токен не имеет прав на постинг в группу."
+        )

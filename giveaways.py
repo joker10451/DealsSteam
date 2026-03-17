@@ -249,6 +249,33 @@ async def get_giveaway_participants(giveaway_id: str) -> list[int]:
     return [r["user_id"] for r in rows]
 
 
+async def remove_participant_from_all_giveaways(user_id: int) -> int:
+    """
+    Удалить пользователя из всех активных розыгрышей.
+    Вызывается когда пользователь покидает канал.
+
+    Returns:
+        Количество розыгрышей, из которых удалён пользователь
+    """
+    from database import get_pool
+
+    pool = await get_pool()
+    result = await pool.execute("""
+        DELETE FROM giveaway_participants
+        WHERE user_id = $1
+          AND giveaway_id IN (
+              SELECT giveaway_id FROM giveaways WHERE status = 'active'
+          )
+    """, user_id)
+    try:
+        count = int(result.split()[-1])
+    except Exception:
+        count = 0
+    if count:
+        log.info(f"Пользователь {user_id} удалён из {count} активных розыгрышей (покинул канал)")
+    return count
+
+
 async def select_winner(
     giveaway_id: str,
 ) -> Optional[tuple[int, str, str, int, int]]:
