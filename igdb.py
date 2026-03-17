@@ -5,9 +5,12 @@ IGDB API (Twitch) — описания, обложки, рейтинги игр.
 """
 import aiohttp
 import asyncio
+import logging
 import time
 from typing import Optional
 from config import IGDB_CLIENT_ID, IGDB_CLIENT_SECRET
+
+log = logging.getLogger(__name__)
 
 TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 IGDB_URL = "https://api.igdb.com/v4/games"
@@ -27,18 +30,21 @@ async def _translate_to_ru(text: str) -> str:
     if not text:
         return text
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(
-                MYMEMORY_URL,
-                params={"q": text, "langpair": "en|ru"},
-                timeout=aiohttp.ClientTimeout(total=8),
-            ) as r:
-                if r.status != 200:
-                    return text
-                data = await r.json(content_type=None)
-                translated = data.get("responseData", {}).get("translatedText", "")
-                return translated if translated else text
-    except Exception:
+        from parsers.utils import fetch_with_retry
+        data = await fetch_with_retry(
+            MYMEMORY_URL,
+            params={"q": text, "langpair": "en|ru"},
+        )
+        if not data:
+            return text
+        translated = data.get("responseData", {}).get("translatedText", "")
+        # MyMemory возвращает "MYMEMORY WARNING" при исчерпании лимита
+        if translated and "MYMEMORY WARNING" not in translated:
+            return translated
+        log.warning(f"MyMemory перевод не удался: {data.get('responseStatus')} — {translated[:80]}")
+        return text
+    except Exception as e:
+        log.warning(f"Ошибка перевода: {e}")
         return text
 
 
