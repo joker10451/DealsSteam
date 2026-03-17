@@ -149,6 +149,7 @@ async def main():
         BotCommand(command="coop", description="Опубликовать кооп-дайджест"),
         BotCommand(command="testgame", description="Тест мини-игр в личку"),
         BotCommand(command="testvk", description="Тестовый пост в ВК"),
+        BotCommand(command="vkgiveaway", description="Опубликовать розыгрыш в ВК"),
     ]
 
     await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())

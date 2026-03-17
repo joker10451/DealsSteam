@@ -172,19 +172,23 @@ async def post_deal_to_vk(deal, rating: Optional[dict] = None, igdb_info: Option
         return False
 
 
-async def post_giveaway_to_vk(title: str, description: str, end_str: str) -> bool:
+async def post_giveaway_to_vk(title: str, description: str, end_str: str, channel_post_id: Optional[int] = None) -> bool:
     """Опубликовать анонс розыгрыша в группу ВК."""
     if not VK_ENABLED or not VK_TOKEN or not VK_GROUP_ID:
         return False
 
     try:
+        tg_link = f"{TG_CHANNEL_LINK}/{channel_post_id}" if channel_post_id else TG_CHANNEL_LINK
+
         text = (
             f"🎁 РОЗЫГРЫШ!\n\n"
             f"🎮 {title}\n\n"
             f"{description}\n\n"
             f"📅 Конец розыгрыша: {end_str}\n\n"
-            f"━━━━━━━━━━━━━━\n"
-            f"✅ Участвовать можно только в Telegram:\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ Участвовать — только в Telegram:\n"
+            f"👉 {tg_link}\n\n"
+            f"🎮 Больше скидок и раздач:\n"
             f"👉 {TG_CHANNEL_LINK}"
         )
 

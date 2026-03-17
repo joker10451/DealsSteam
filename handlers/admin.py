@@ -844,6 +844,71 @@ async def cmd_test_game(message: Message):
         )
 
 
+@router.message(Command("vkgiveaway"))
+async def cmd_vk_giveaway(message: Message):
+    """Опубликовать активный розыгрыш в группу ВК (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    status_msg = await message.answer("🔄 Ищу активный розыгрыш...")
+
+    from vk_publisher import post_giveaway_to_vk, VK_ENABLED, VK_GROUP_ID
+    from giveaways import get_active_giveaways
+    import pytz
+    from datetime import datetime
+
+    if not VK_ENABLED:
+        await status_msg.edit_text("❌ VK_ENABLED=false.")
+        return
+
+    giveaways = await get_active_giveaways()
+    if not giveaways:
+        await status_msg.edit_text("❌ Нет активных розыгрышей. Создай через /creategiveaway.")
+        return
+
+    # Берём первый активный
+    g = giveaways[0]
+    MSK = pytz.timezone("Europe/Moscow")
+    end_time = g["end_time"]
+    if end_time.tzinfo is None:
+        import pytz as _pytz
+        end_time = _pytz.utc.localize(end_time)
+    end_msk = end_time.astimezone(MSK)
+    end_str = end_msk.strftime("%d.%m.%Y %H:%M МСК")
+
+    participants = g.get("participants_count", 0)
+    description = (
+        f"{g['description']}\n\n"
+        f"👥 Уже участвуют: {participants} чел.\n"
+        f"🎲 Больше друзей = больше шансов на победу!"
+    ) if g.get("description") else (
+        f"👥 Уже участвуют: {participants} чел.\n"
+        f"🎲 Больше друзей = больше шансов на победу!"
+    )
+
+    channel_post_id = g.get("channel_post_id")
+    ok = await post_giveaway_to_vk(
+        title=g["title"],
+        description=description,
+        end_str=end_str,
+        channel_post_id=channel_post_id,
+    )
+
+    if ok:
+        tg_link = f"https://t.me/GameDealsRadarRu/{channel_post_id}" if channel_post_id else "https://t.me/GameDealsRadarRu"
+        await status_msg.edit_text(
+            f"✅ Розыгрыш опубликован в ВК!\n\n"
+            f"🎮 {esc(g['title'])}\n"
+            f"📅 До: {end_str}\n"
+            f"👥 Участников: {participants}\n\n"
+            f"🔗 ВК: https://vk.com/club{VK_GROUP_ID}\n"
+            f"🔗 ТГ: {tg_link}"
+        )
+    else:
+        await status_msg.edit_text("❌ Ошибка публикации в ВК. Проверь логи.")
+
+
 @router.message(Command("testvk"))
 async def cmd_test_vk(message: Message):
     """Отправить тестовый пост в группу ВК (только админ)."""
