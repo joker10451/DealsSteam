@@ -38,7 +38,7 @@ async def cmd_giveaway(message: Message):
     lines = ["🎁 <b>Активные конкурсы:</b>\n"]
     
     for g in giveaways:
-        end_time = g["end_time"].replace(tzinfo=MSK)
+        end_time = _to_msk(g["end_time"])
         end_str = end_time.strftime("%d.%m %H:%M")
         
         prize_emoji = {
@@ -62,6 +62,15 @@ async def cmd_giveaway(message: Message):
     lines.append("\n<i>Участвуй через кнопки в постах канала!</i>")
     
     await message.answer("\n".join(lines))
+
+
+def _to_msk(dt) -> "datetime":
+    """Безопасно конвертировать datetime в MSK: если уже aware — конвертируем, иначе replace."""
+    import pytz
+    MSK = pytz.timezone("Europe/Moscow")
+    if dt.tzinfo is not None:
+        return dt.astimezone(MSK)
+    return dt.replace(tzinfo=MSK)
 
 
 @router.message(Command("creategiveaway"))
@@ -194,7 +203,7 @@ async def cmd_giveaway_history(message: Message):
     lines = ["📋 <b>История конкурсов (последние 10):</b>\n"]
     bot = message.bot
     for r in rows:
-        end_str = r["end_time"].replace(tzinfo=MSK).strftime("%d.%m.%Y")
+        end_str = _to_msk(r["end_time"]).strftime("%d.%m.%Y")
         winner_str = "нет участников"
         if r["winner_user_id"]:
             try:
@@ -210,6 +219,9 @@ async def cmd_giveaway_history(message: Message):
         )
 
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("endgiveaway"))
 async def cmd_end_giveaway(message: Message):
     """Завершить конкурс досрочно (только админ)."""
     if not _admin_only(message):
@@ -270,7 +282,7 @@ async def callback_giveaway_join(callback: CallbackQuery):
                 end_time = giveaway["end_time"]
                 import pytz
                 MSK = pytz.timezone("Europe/Moscow")
-                end_str = end_time.replace(tzinfo=MSK).strftime("%d.%m.%Y %H:%M МСК")
+                end_str = _to_msk(end_time).strftime("%d.%m.%Y %H:%M МСК")
                 
                 prize_emoji = {
                     "steam_key": "🎮",
@@ -414,7 +426,7 @@ async def cmd_my_giveaways(message: Message):
     lines = ["🎁 <b>Твои конкурсы:</b>\n"]
     
     for r in rows:
-        end_time = r["end_time"].replace(tzinfo=MSK)
+        end_time = _to_msk(r["end_time"])
         end_str = end_time.strftime("%d.%m %H:%M")
         
         prize_emoji = {

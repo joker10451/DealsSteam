@@ -194,10 +194,16 @@ async def join_giveaway(giveaway_id: str, user_id: int) -> tuple[bool, str]:
     
     # Добавляем участника
     try:
+        existing = await pool.fetchval(
+            "SELECT 1 FROM giveaway_participants WHERE giveaway_id = $1 AND user_id = $2",
+            giveaway_id, user_id
+        )
+        if existing:
+            return False, "Ты уже участвуешь в этом розыгрыше! 🎲"
+
         await pool.execute("""
             INSERT INTO giveaway_participants (giveaway_id, user_id)
             VALUES ($1, $2)
-            ON CONFLICT (giveaway_id, user_id) DO NOTHING
         """, giveaway_id, user_id)
         
         return True, "Ты участвуешь в розыгрыше! 🎉"
@@ -419,7 +425,11 @@ async def publish_giveaway(giveaway_id: str) -> Optional[int]:
         return None
     
     # Форматируем сообщение
-    end_time = giveaway["end_time"].replace(tzinfo=MSK)
+    end_time = giveaway["end_time"]
+    if end_time.tzinfo is not None:
+        end_time = end_time.astimezone(MSK)
+    else:
+        end_time = end_time.replace(tzinfo=MSK)
     end_str = end_time.strftime("%d.%m.%Y %H:%M МСК")
     
     prize_emoji = {
