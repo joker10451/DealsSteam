@@ -15,8 +15,9 @@ from onboarding import (
     format_tutorial_message, create_tutorial_keyboard,
     get_onboarding_progress, RESTART_MESSAGE
 )
-from referral import check_and_apply_referral, ensure_referral_code_registered
+from referral import check_and_apply_referral, ensure_referral_code_registered, generate_referral_code, get_referral_link
 from publisher import send_with_retry, get_bot
+from config import BOT_USERNAME
 
 log = logging.getLogger(__name__)
 router = Router()
@@ -51,6 +52,10 @@ async def cmd_start(message: Message):
                     log.info(f"User {user_id} registered via referral")
                 elif referral_result and referral_result.get("error"):
                     log.warning(f"Referral error for user {user_id}: {referral_result['error']}")
+
+            # Обрабатываем "Отправить другу" — выдаём персональную share-ссылку
+            elif start_param and start_param.startswith("share_"):
+                await _handle_share_deal(message, user_id, start_param[6:])
         
         # Если новый пользователь - запускаем туториал
         if new_user:
@@ -339,3 +344,39 @@ async def tutorial_navigation(callback: CallbackQuery):
     except Exception as e:
         log.error(f"Error in tutorial_navigation for user {user_id}, action {action}: {e}")
         await callback.answer("❌ Произошла ошибка. Попробуй /tutorial", show_alert=True)
+
+
+async def _handle_share_deal(message: Message, user_id: int, deal_id_short: str):
+    """
+    Обрабатывает нажатие кнопки "Отправить другу" из канала.
+    Выдаёт пользователю готовый текст для пересылки с его реферальной ссылкой.
+    """
+    if not BOT_USERNAME:
+        await message.answer("Функция временно недоступна.")
+        return
+
+    ref_link = get_referral_link(user_id, BOT_USERNAME)
+
+    text = (
+        "🎁 <b>Отправь другу скидку!</b>\n\n"
+        "Скопируй текст ниже и отправь другу:\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎮 Смотри какая скидка!\n"
+        f"Подписывайся на канал с лучшими игровыми скидками 👇\n\n"
+        f"👉 {ref_link}\n\n"
+        f"Там каждый день скидки от 50% на Steam, Epic и другие магазины.\n"
+        f"Плюс бесплатные раздачи и мини-игры с призами!\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Когда друг перейдёт по твоей ссылке — ты получишь <b>+100 баллов</b> 🎯\n"
+        f"Баллы меняй на Steam-ключи в /shop"
+    )
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="📤 Поделиться ссылкой",
+            url=f"https://t.me/share/url?url={ref_link}&text=Смотри+какие+скидки+на+игры!",
+        )
+    ]])
+
+    await message.answer(text, reply_markup=keyboard)

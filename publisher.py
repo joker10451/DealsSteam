@@ -12,7 +12,7 @@ import pytz
 from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from config import CHANNEL_ID, ADMIN_ID
+from config import CHANNEL_ID, ADMIN_ID, BOT_USERNAME
 from database import (
     get_wishlist_matches, save_price_game,
     increment_metric, wishlist_remove_user,
@@ -283,6 +283,14 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         rows.append([InlineKeyboardButton(
             text="🌍 Цены в других регионах",
             callback_data=f"regprice:{appid}:{deal.title[:30]}",
+        )])
+
+    # Кнопка "Отправить другу" — ведёт в бота, тот выдаёт персональную share-ссылку
+    if BOT_USERNAME:
+        share_param = f"share_{_cb_id(deal.deal_id)}"
+        rows.append([InlineKeyboardButton(
+            text="🎁 Отправить другу",
+            url=f"https://t.me/{BOT_USERNAME}?start={share_param}",
         )])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
