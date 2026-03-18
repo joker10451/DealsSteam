@@ -75,7 +75,6 @@ async def _check_and_post_impl() -> Optional[str]:
     for fetcher, name in [
         (get_steam_deals, "Steam"),
         (get_epic_deals, "Epic Games"),
-        (get_cheapshark_deals, "CheapShark"),
     ]:
         try:
             deals = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
