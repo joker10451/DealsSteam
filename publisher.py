@@ -184,7 +184,10 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
 
     # Цена с улучшенным форматированием
     if deal.is_free:
-        lines.append("💸 <s>Платная</s>  →  🆓 <b>БЕСПЛАТНО</b>")
+        if old_price and old_price not in ("—", "Платная", ""):
+            lines.append(f"💸 <s>{esc(old_price)}</s>  →  🆓 <b>БЕСПЛАТНО</b>")
+        else:
+            lines.append("💸 <s>Платная</s>  →  🆓 <b>БЕСПЛАТНО</b>")
     else:
         discount_emoji = "🔥" if deal.discount >= 80 else "💰"
         lines.append(f"{discount_emoji} <s>{esc(old_price)}</s>  →  ✅ <b>{esc(new_price)}</b>")

@@ -3,8 +3,8 @@ CheapShark API — агрегатор скидок из 20+ магазинов (
 Документация: https://www.cheapshark.com/api
 Цены в USD, поэтому показываем их как есть.
 """
+import re
 import asyncio
-import aiohttp
 from parsers.steam import Deal
 from parsers.utils import fetch_with_retry
 
@@ -17,6 +17,23 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 # Магазины которые уже покрыты другими парсерами — пропускаем чтобы не дублировать
 SKIP_STORE_IDS = {"1"}  # 1=Steam
+
+# Маппинг storeID → название (основные магазины CheapShark)
+STORE_NAMES = {
+    "2": "GamersGate",
+    "3": "GreenManGaming",
+    "6": "Fanatical",
+    "7": "WinGameStore",
+    "8": "GameBillet",
+    "11": "Humble Store",
+    "13": "IndieGala",
+    "15": "Voidu",
+    "21": "WinGameStore",
+    "23": "GreenManGaming",
+    "25": "Humble Store",
+    "27": "IndieGala",
+    "31": "Fanatical",
+}
 
 
 async def get_cheapshark_deals(min_discount: int = 50) -> list[Deal]:
@@ -33,6 +50,7 @@ async def get_cheapshark_deals(min_discount: int = 50) -> list[Deal]:
         store_id = str(item.get("storeID", ""))
         if store_id in SKIP_STORE_IDS:
             continue
+        store_name = STORE_NAMES.get(store_id, "PC Store")
 
         try:
             normal = float(item.get("normalPrice", 0))
@@ -53,15 +71,15 @@ async def get_cheapshark_deals(min_discount: int = 50) -> list[Deal]:
         game_id = item.get("gameID", deal_id)
         thumb = item.get("thumb", None)
 
-        old_price = f"${float(normal_price):.2f}"
+        old_price = f"~{float(normal_price):.2f} USD"
         new_price_val = float(sale_price)
         is_free = new_price_val == 0
-        new_price = "Бесплатно" if is_free else f"${new_price_val:.2f}"
+        new_price = "Бесплатно" if is_free else f"~{new_price_val:.2f} USD"
 
         deals.append(Deal(
             deal_id=f"cs_{game_id}",
             title=title,
-            store="CheapShark",
+            store=store_name,
             old_price=old_price,
             new_price=new_price,
             discount=discount_pct,

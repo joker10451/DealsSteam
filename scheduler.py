@@ -21,6 +21,8 @@ from database import (
 )
 from parsers.steam import get_steam_deals
 from parsers.epic import get_epic_deals
+from parsers.cheapshark import get_cheapshark_deals
+from parsers.gamerpower import get_gamerpower_deals
 from enricher import get_steam_rating
 from igdb import get_game_info
 from hidden_gems import find_hidden_gems
@@ -73,6 +75,7 @@ async def _check_and_post_impl() -> Optional[str]:
     for fetcher, name in [
         (get_steam_deals, "Steam"),
         (get_epic_deals, "Epic Games"),
+        (get_cheapshark_deals, "CheapShark"),
     ]:
         try:
             deals = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
@@ -83,6 +86,15 @@ async def _check_and_post_impl() -> Optional[str]:
         except Exception as e:
             log.error(f"Ошибка при парсинге {name}: {e}")
             errors.append(f"{name}: {e}")
+
+    # GamerPower — только бесплатные раздачи, без параметра min_discount
+    try:
+        gp_deals = await get_gamerpower_deals()
+        log.info(f"GamerPower: найдено {len(gp_deals)} раздач")
+        all_deals.extend(gp_deals)
+    except Exception as e:
+        log.error(f"Ошибка при парсинге GamerPower: {e}")
+        errors.append(f"GamerPower: {e}")
 
     if errors:
         await notify_admin("\n".join(errors))
@@ -334,12 +346,14 @@ async def run_parser_tests():
         return
 
     results = []
-    for fetcher, name in [
-        (get_steam_deals, "Steam"),
-        (get_epic_deals, "Epic Games"),
+    for fetcher, name, kwargs in [
+        (get_steam_deals, "Steam", {"min_discount": MIN_DISCOUNT_PERCENT}),
+        (get_epic_deals, "Epic Games", {"min_discount": MIN_DISCOUNT_PERCENT}),
+        (get_cheapshark_deals, "CheapShark", {"min_discount": MIN_DISCOUNT_PERCENT}),
+        (get_gamerpower_deals, "GamerPower", {}),
     ]:
         try:
-            deals = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
+            deals = await fetcher(**kwargs)
             count = len(deals)
             if count == 0:
                 results.append(f"⚠️ {name}: 0 скидок")
@@ -484,12 +498,16 @@ async def get_top_deals_now(limit: int = 5, user_id: int = None) -> list:
     from database import steam_library_filter_deals
     
     all_deals = []
-    for fetcher in [get_steam_deals, get_epic_deals]:
+    for fetcher in [get_steam_deals, get_epic_deals, get_cheapshark_deals]:
         try:
             deals = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
             all_deals.extend(deals)
         except Exception:
             pass
+    try:
+        all_deals.extend(await get_gamerpower_deals())
+    except Exception:
+        pass
 
     # Фильтруем бандлы и уже опубликованные
     result = []
