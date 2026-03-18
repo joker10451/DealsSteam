@@ -265,108 +265,6 @@ async def check_screenshot_answer(user_id: int, game_id: str, answer: str, usern
 
 
 # ============================================================================
-# Игра 2: Ежедневный челлендж
-# ============================================================================
-
-async def init_daily_challenge_table():
-    """Создать таблицу для ежедневных челленджей."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS daily_challenges (
-                challenge_date DATE PRIMARY KEY,
-                challenge_type TEXT NOT NULL,
-                challenge_data JSONB NOT NULL,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS daily_challenge_completions (
-                user_id BIGINT,
-                challenge_date DATE,
-                completed_at TIMESTAMPTZ DEFAULT NOW(),
-                PRIMARY KEY (user_id, challenge_date)
-            )
-        """)
-
-
-async def get_daily_challenge() -> Optional[dict]:
-    """Получить челлендж дня."""
-    import json
-    today = datetime.now(MSK).date()
-    
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT challenge_type, challenge_data
-            FROM daily_challenges
-            WHERE challenge_date = $1
-        """, today)
-        
-        if row:
-            data = row["challenge_data"]
-            # Парсим JSON если это строка
-            if isinstance(data, str):
-                data = json.loads(data)
-            
-            return {
-                "type": row["challenge_type"],
-                "data": data
-            }
-    
-    return None
-
-
-async def create_daily_challenge(challenge_type: str, data: dict):
-    """Создать челлендж дня."""
-    import json
-    today = datetime.now(MSK).date()
-    
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO daily_challenges (challenge_date, challenge_type, challenge_data)
-            VALUES ($1, $2, $3::jsonb)
-            ON CONFLICT (challenge_date) DO UPDATE SET
-                challenge_type = $2,
-                challenge_data = $3::jsonb
-        """, today, challenge_type, json.dumps(data))
-
-
-async def complete_daily_challenge(user_id: int) -> dict:
-    """Отметить челлендж как выполненный."""
-    today = datetime.now(MSK).date()
-
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        # Атомарная вставка — если уже выполнен, INSERT вернёт 0 строк
-        result = await conn.execute("""
-            INSERT INTO daily_challenge_completions (user_id, challenge_date)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id, challenge_date) DO NOTHING
-        """, user_id, today)
-
-        if result == "INSERT 0 0":
-            return {"error": "Ты уже выполнил челлендж сегодня!"}
-    
-    # Начисляем бонусные баллы и проверяем достижения
-    new_achievements = await add_score(user_id, 50, True, reason="challenge") or []
-    
-    # Увеличиваем счётчик выполненных челленджей
-    from achievements import increment_challenges_completed, check_and_unlock_achievements
-    await increment_challenges_completed(user_id)
-    more_achievements = await check_and_unlock_achievements(user_id)
-    if more_achievements:
-        new_achievements.extend(more_achievements)
-    
-    return {
-        "success": True,
-        "points": 50,
-        "new_achievements": new_achievements if new_achievements else []
-    }
-
-
-# ============================================================================
 # Инициализация всех таблиц
 # ============================================================================
 
@@ -374,7 +272,6 @@ async def init_minigames_db():
     """Инициализировать все таблицы для мини-игр."""
     await init_scores_table()
     await init_screenshot_game_table()
-    await init_daily_challenge_table()
     
     # Инициализируем таблицу достижений
     from achievements import init_achievements_table

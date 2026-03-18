@@ -30,7 +30,7 @@ from publisher import (
     notify_admin, send_with_retry, get_daily_theme, esc, get_bot,
     notify_free_game_subscribers,
 )
-from price_glitch import is_price_glitch
+from price_glitch import is_price_glitch, check_for_glitch
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 log = logging.getLogger(__name__)
@@ -180,7 +180,6 @@ async def _check_and_post_impl() -> Optional[str]:
 
     # Алерт администратору о критических ошибках цен — возможность закупить ключи
     if glitches:
-        from price_glitch import check_for_glitch
         for g in glitches[:3]:
             glitch_info = await check_for_glitch(g)
             if glitch_info and glitch_info.get("severity") == "critical":

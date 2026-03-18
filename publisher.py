@@ -24,6 +24,7 @@ from igdb import get_game_info
 from collage import make_collage
 from currency import to_rubles, format_rub
 from price_glitch import check_for_glitch, format_glitch_alert
+from smart_filter import generate_context_comment
 
 log = logging.getLogger(__name__)
 MSK = pytz.timezone("Europe/Moscow")
@@ -219,7 +220,6 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         lines.append(f"\n📖 <i>{esc(description)}</i>")
 
     # Комментарий бота (с контекстом для старых/неизвестных игр)
-    from smart_filter import generate_context_comment
     comment = generate_context_comment(deal, rating, igdb_info)
     lines.append(f"\n💬 <i>{esc(comment)}</i>")
 
@@ -440,7 +440,6 @@ async def notify_wishlist_users(deal, historical_low: Optional[dict] = None):
         hist_low = historical_low
         if hist_low is None and deal.store == "Steam" and deal.deal_id.startswith("steam_"):
             appid = deal.deal_id.replace("steam_", "")
-            from enricher import get_historical_low
             hist_low = await get_historical_low(appid)
         
         if hist_low and hist_low.get("is_current_low"):
