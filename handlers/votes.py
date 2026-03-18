@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import add_vote, get_votes, increment_metric, engagement_event
+from regional_prices import get_regional_prices, format_regional_prices
 
 router = Router()
 
@@ -74,3 +75,28 @@ async def handle_vote(callback: CallbackQuery):
         pass
 
     await callback.answer("🔥 Огонь!" if vote_type == "fire" else "💩 Мимо", show_alert=False)
+
+
+@router.callback_query(F.data.startswith("regprice:"))
+async def handle_regional_prices(callback: CallbackQuery):
+    # callback_data = "regprice:{appid}:{title}"
+    parts = callback.data.split(":", 2)
+    if len(parts) < 3:
+        await callback.answer("Ошибка: неверный формат.", show_alert=True)
+        return
+
+    appid = parts[1]
+    title = parts[2]
+
+    await callback.answer("⏳ Загружаю цены...", show_alert=False)
+
+    try:
+        results = await get_regional_prices(appid)
+        text = format_regional_prices(title, results)
+    except Exception:
+        text = "Не удалось получить региональные цены. Попробуй позже."
+
+    await callback.message.answer(
+        text,
+        disable_web_page_preview=True,
+    )
