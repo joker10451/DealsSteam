@@ -1,7 +1,6 @@
 import re
 from html import escape
 
-import aiohttp
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -45,12 +44,13 @@ async def cmd_price(message: Message):
     appid = extract_appid(query)
 
     if not appid:
-        search_url = "https://store.steampowered.com/api/storesearch/"
+        from parsers.utils import fetch_with_retry
         try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(search_url, params={"term": query, "cc": "ru", "l": "russian"}) as r:
-                    data = await r.json()
-            items = data.get("items", [])
+            data = await fetch_with_retry(
+                "https://store.steampowered.com/api/storesearch/",
+                params={"term": query, "cc": "ru", "l": "russian"},
+            )
+            items = data.get("items", []) if data else []
             if items:
                 appid = str(items[0]["id"])
                 title = items[0]["name"]
@@ -91,9 +91,8 @@ async def cmd_find(message: Message):
     params = {"json": 1, "tags": tag_id, "specials": 1, "sort_by": "Discount_DESC", "count": 5}
 
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                data = await r.json()
+        from parsers.utils import fetch_with_retry
+        data = await fetch_with_retry(url, params=params)
     except Exception as e:
         await wait_msg.edit_text(f"Ошибка запроса: {e}")
         return

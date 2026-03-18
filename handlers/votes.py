@@ -2,7 +2,6 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from database import add_vote, get_votes, increment_metric, engagement_event
-from regional_prices import get_regional_prices, format_regional_prices
 
 router = Router()
 

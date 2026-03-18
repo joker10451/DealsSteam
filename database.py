@@ -1485,3 +1485,23 @@ async def get_engagement_summary(days: int = 7) -> dict:
         WHERE last_event >= NOW() - ($1 || ' days')::INTERVAL
     """, str(days))
     return dict(row) if row else {}
+
+
+async def mark_reward_claimed(user_id: int, reward_id_prefix: str) -> bool:
+    """Отмечает последний невыданный приз пользователя как выданный."""
+    pool = await get_pool()
+    result = await pool.execute(
+        """
+        UPDATE user_rewards
+        SET is_claimed = TRUE
+        WHERE id = (
+            SELECT id FROM user_rewards
+            WHERE user_id = $1 AND reward_id LIKE $2 AND is_claimed = FALSE
+            ORDER BY purchased_at DESC
+            LIMIT 1
+        )
+        """,
+        user_id,
+        f"{reward_id_prefix}%",
+    )
+    return result == "UPDATE 1"

@@ -178,22 +178,8 @@ async def cmd_give_key(message: Message):
         )
 
         # Отмечаем приз как выданный
-        from database import get_pool
-
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE user_rewards
-                SET is_claimed = TRUE
-                WHERE user_id = $1 
-                AND reward_id LIKE 'steam_key_%'
-                AND is_claimed = FALSE
-                ORDER BY purchased_at DESC
-                LIMIT 1
-            """,
-                user_id,
-            )
+        from database import mark_reward_claimed
+        await mark_reward_claimed(user_id, "steam_key_")
 
         await message.answer(f"✅ Ключ отправлен пользователю {user_id}")
 
