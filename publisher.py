@@ -277,14 +277,6 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     if price_game_button:
         rows.append([price_game_button])
 
-    # Кнопка региональных цен — только для Steam (есть appid)
-    if deal.deal_id.startswith("steam_"):
-        appid = deal.deal_id.replace("steam_", "")
-        rows.append([InlineKeyboardButton(
-            text="🌍 Цены в других регионах",
-            callback_data=f"regprice:{appid}:{deal.title[:30]}",
-        )])
-
     # Кнопка "Отправить другу" — ведёт в бота, тот выдаёт персональную share-ссылку
     if BOT_USERNAME:
         share_param = f"share_{_cb_id(deal.deal_id)}"

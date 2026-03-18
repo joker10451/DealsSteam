@@ -77,26 +77,3 @@ async def handle_vote(callback: CallbackQuery):
     await callback.answer("🔥 Огонь!" if vote_type == "fire" else "💩 Мимо", show_alert=False)
 
 
-@router.callback_query(F.data.startswith("regprice:"))
-async def handle_regional_prices(callback: CallbackQuery):
-    # callback_data = "regprice:{appid}:{title}"
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
-        await callback.answer("Ошибка: неверный формат.", show_alert=True)
-        return
-
-    appid = parts[1]
-    title = parts[2]
-
-    await callback.answer("⏳ Загружаю цены...", show_alert=False)
-
-    try:
-        results = await get_regional_prices(appid)
-        text = format_regional_prices(title, results)
-    except Exception:
-        text = "Не удалось получить региональные цены. Попробуй позже."
-
-    await callback.message.answer(
-        text,
-        disable_web_page_preview=True,
-    )
