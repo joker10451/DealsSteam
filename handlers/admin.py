@@ -49,8 +49,10 @@ async def cmd_post(message: Message):
             _last_manual_post = time.time()
         await status_msg.edit_text("✅ Готово.")
     except Exception as e:
-        log.error(f"Ошибка ручной публикации: {e}")
-        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
+        import traceback
+        tb = traceback.format_exc()
+        log.error(f"Ошибка ручной публикации:\n{tb}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}\n\n<code>{esc(tb[-800:])}</code>")
 
 
 @router.message(Command("gems"))

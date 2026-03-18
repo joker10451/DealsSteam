@@ -13,7 +13,7 @@ from achievements import check_and_unlock_achievements
 from database import get_price_game, record_price_game_answer, get_pool
 from minigames import (
     get_user_score, get_leaderboard, check_screenshot_answer,
-    get_daily_challenge, complete_daily_challenge, add_score,
+    add_score,
 )
 from publisher import get_bot, send_with_retry
 
@@ -113,41 +113,6 @@ async def cmd_games(message: Message):
 """
     await message.answer(text.strip())
 
-
-@router.message(Command("challenge"))
-async def cmd_challenge(message: Message):
-    """Показать челлендж дня и прогресс."""
-    from daily_challenges import check_challenge_progress, format_challenge_message
-    
-    challenge = await get_daily_challenge()
-    
-    if not challenge:
-        await message.answer(
-            "🎯 Челлендж дня ещё не готов.\n"
-            "Попробуй позже!"
-        )
-        return
-    
-    # Получаем прогресс пользователя
-    progress = await check_challenge_progress(message.from_user.id)
-    
-    # Форматируем сообщение
-    text = format_challenge_message(challenge)
-    
-    # Добавляем прогресс
-    if progress:
-        text += f"\n\n📊 <b>Твой прогресс:</b>\n"
-        if progress.get("completed"):
-            text += "✅ Челлендж выполнен!"
-        else:
-            text += f"{progress.get('message', 'В процессе...')}\n"
-            if "current" in progress and "target" in progress:
-                bar_length = 10
-                filled = int((progress["progress"] / 100) * bar_length)
-                bar = "█" * filled + "░" * (bar_length - filled)
-                text += f"[{bar}] {progress['progress']}%"
-    
-    await message.answer(text.strip())
 
 
 @router.callback_query(lambda c: c.data and (c.data.startswith("scr:") or c.data.startswith("screenshot:")))

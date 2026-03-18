@@ -584,7 +584,7 @@ async def publish_giveaway(giveaway_id: str) -> Optional[int]:
         )],
         [InlineKeyboardButton(
             text="📢 Поделиться",
-            switch_inline_query=f"🎁 Розыгрыш {giveaway['title']}! Участвуй → t.me/GameDealsRadarRu"
+            url=f"https://t.me/share/url?url=t.me/GameDealsRadarRu&text=🎁+Розыгрыш+{giveaway['title']}!+Участвуй!"
         )]
     ])
     

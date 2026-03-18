@@ -87,6 +87,12 @@ async def _check_and_post_impl() -> Optional[str]:
     if errors:
         await notify_admin("\n".join(errors))
 
+    if not all_deals:
+        log.warning("Все парсеры вернули 0 скидок — публикация невозможна")
+        return None
+
+    log.info(f"Всего скидок от парсеров: {len(all_deals)}")
+
     filtered = []
     rating_cache: dict[str, Optional[dict]] = {}
     igdb_cache: dict[str, Optional[dict]] = {}
@@ -94,6 +100,7 @@ async def _check_and_post_impl() -> Optional[str]:
 
     for deal in all_deals:
         if await is_already_posted(deal.deal_id):
+            log.debug(f"Уже опубликовано: {deal.title} ({deal.deal_id})")
             continue
 
         # Фильтр бандлов
@@ -138,11 +145,15 @@ async def _check_and_post_impl() -> Optional[str]:
         if not should_publish:
             log.info(f"Отклонено умным фильтром ({reason}): {deal.title}")
             continue
-        
+
+        log.debug(f"Прошло фильтры: {deal.title} | -{deal.discount}% | reason={reason}")
         filtered.append(deal)
 
     if not filtered:
-        log.info("Нет новых скидок для публикации.")
+        log.warning(
+            f"Нет новых скидок для публикации. "
+            f"Всего от парсеров: {len(all_deals)}, прошло фильтры: 0"
+        )
         return None
 
     filtered = deduplicate(filtered)
@@ -189,6 +200,10 @@ async def _check_and_post_impl() -> Optional[str]:
         log.info("Нет новых скидок для публикации.")
         return None
 
+    log.info(f"Кандидаты на публикацию: {len(combined)} (glitch={len(glitches)}, free={len(free)}, paid={len(paid)})")
+    for d in combined[:5]:
+        log.info(f"  → {d.title} | {d.store} | -{d.discount}% | {d.deal_id}")
+
     for deal in combined[:5]:  # пробуем до 5 кандидатов
         is_priority = deal in glitches or deal.is_free
         ok, historical_low = await publish_single(
@@ -209,13 +224,8 @@ async def _check_and_post_impl() -> Optional[str]:
             # Дублируем в ВК с рейтингом и IGDB
             try:
                 from vk_publisher import post_deal_to_vk
-                from igdb import get_game_info
-                igdb_info = None
-                try:
-                    igdb_info = await get_game_info(deal.title)
-                except Exception:
-                    pass
-                await post_deal_to_vk(deal, rating_cache.get(deal.deal_id), igdb_info=igdb_info)
+                vk_igdb_info = igdb_cache.get(deal.deal_id)
+                await post_deal_to_vk(deal, rating_cache.get(deal.deal_id), igdb_info=vk_igdb_info)
             except Exception as e:
                 log.warning(f"VK публикация не удалась: {e}")
             

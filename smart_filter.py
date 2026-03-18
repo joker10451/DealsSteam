@@ -44,27 +44,6 @@ async def should_publish_deal(deal, rating: Optional[dict] = None, igdb_info: Op
                 log.info(f"Отклонено (средний рейтинг + малая скидка): {deal.title} ({score}%, -{deal.discount}%)")
                 return False, f"mediocre_rating_small_discount"
     
-    # Проверяем возраст игры
-    if igdb_info:
-        release_date = igdb_info.get("release_date")
-        if release_date:
-            try:
-                release_year = datetime.fromtimestamp(release_date).year
-                current_year = datetime.now().year
-                age = current_year - release_year
-                
-                # Игра старше 10 лет И скидка < 90%
-                if age > 10 and deal.discount < 90:
-                    # Исключение: высокий рейтинг (классика)
-                    if rating and rating["score"] >= 85:
-                        log.info(f"Старая игра с высоким рейтингом: {deal.title} ({age} лет, {rating['score']}%)")
-                        return True, "old_classic"
-                    
-                    log.info(f"Отклонено (старая игра + малая скидка): {deal.title} ({age} лет, -{deal.discount}%)")
-                    return False, f"old_game_small_discount"
-            except Exception:
-                pass
-    
     return True, "passed_filters"
 
 
