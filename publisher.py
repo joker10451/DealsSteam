@@ -142,7 +142,13 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     # Используем флаг is_current_low из ITAD если доступен, иначе fallback по скидке
     is_current_low = bool(historical_low and historical_low.get("is_current_low"))
     is_historic = is_current_low or bool(historical_low and deal.discount >= 70)
-    theme_emoji, theme_name, _ = get_daily_theme()
+    theme_emoji, theme_name, theme_genres = get_daily_theme()
+
+    # Показываем тему дня только если жанр игры совпадает с темой (или тема универсальная)
+    deal_genres_lower = [g.lower() for g in (deal.genres or [])]
+    theme_matches = not theme_genres or any(g in deal_genres_lower for g in theme_genres)
+    header_emoji = theme_emoji if theme_matches else "🎮"
+    header_name = theme_name if theme_matches else "СКИДКА ДНЯ"
 
     old_price = await _localize_price(deal.old_price)
     new_price = await _localize_price(deal.new_price)
@@ -150,7 +156,7 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     lines = []
     adult_prefix = "🔞 " if (igdb_info and igdb_info.get("is_adult")) else ""
     
-    # Заголовок: тема дня всегда показывается, поверх неё — статус скидки
+    # Заголовок: тема дня только если жанр совпадает, иначе нейтральный
     if glitch_info and glitch_info.get('severity') == 'critical':
         lines.append(f"🚨 <b>{adult_prefix}ОШИБКА ЦЕНЫ? СРОЧНО! · {now}</b>")
     elif glitch_info and glitch_info.get('severity') == 'high':
@@ -158,16 +164,16 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     elif deal.is_free:
         lines.append(f"🎁 <b>{adult_prefix}БЕСПЛАТНО · {now}</b>")
     elif is_historic:
-        lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
+        lines.append(f"{header_emoji} <b>{adult_prefix}{header_name.upper()} · {now}</b>")
         if is_current_low:
             lines.append(f"📉 <i>Исторический минимум цены!</i>")
         else:
             lines.append(f"⚡️ <i>Близко к историческому минимуму!</i>")
     elif deal.discount >= 80:
-        lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
+        lines.append(f"{header_emoji} <b>{adult_prefix}{header_name.upper()} · {now}</b>")
         lines.append(f"🔥 <i>Огонь-скидка −{deal.discount}%!</i>")
     else:
-        lines.append(f"{theme_emoji} <b>{adult_prefix}{theme_name.upper()} · {now}</b>")
+        lines.append(f"{header_emoji} <b>{adult_prefix}{header_name.upper()} · {now}</b>")
 
     # Название игры с пояснением для бандлов
     title_line = f"{store_emoji} <b>{esc(deal.title)}</b>"

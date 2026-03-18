@@ -270,7 +270,7 @@ async def handle_price_game_start(callback: CallbackQuery):
         await send_with_retry(lambda: get_bot().send_message(
             callback.from_user.id, text, reply_markup=keyboard
         ))
-        await callback.answer("Игра отправлена в личку! 🎮")
+        await callback.answer("Игра отправлена в личку! 🎮", show_alert=True)
     except Exception:
         await callback.answer(
             "Сначала напиши боту в личку — нажми /start",

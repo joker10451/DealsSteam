@@ -444,7 +444,11 @@ async def cmd_test_post(message: Message):
         else:
             igdb_info = await get_game_info(deal.title)
 
-        theme_emoji, theme_name, _ = get_daily_theme()
+        theme_emoji, theme_name, theme_genres = get_daily_theme()
+        deal_genres_lower = [g.lower() for g in (deal.genres or [])]
+        theme_matches = not theme_genres or any(g in deal_genres_lower for g in theme_genres)
+        header_emoji = theme_emoji if theme_matches else "🎮"
+        header_name = theme_name if theme_matches else "СКИДКА ДНЯ"
         old_price = await _localize_price(deal.old_price)
         new_price = await _localize_price(deal.new_price)
 
@@ -456,7 +460,7 @@ async def cmd_test_post(message: Message):
         elif deal.discount >= 80:
             lines.append(f"🔥 <b>ОГОНЬ-СКИДКА · {now}</b>")
         else:
-            lines.append(f"{theme_emoji} <b>{theme_name.upper()} · {now}</b>")
+            lines.append(f"{header_emoji} <b>{header_name.upper()} · {now}</b>")
 
         lines.append(f"\n{store_emoji} <b>{esc(deal.title)}</b>")
 
