@@ -310,7 +310,11 @@ async def handle_price_game_answer(callback: CallbackQuery):
         await callback.answer("Ты уже отвечал на этот вопрос 😉", show_alert=True)
         return
 
-    if chosen == correct:
+    # Сразу отвечаем на callback чтобы убрать "часики" у пользователя
+    is_correct = chosen == correct
+    await callback.answer("Верно! 🎉" if is_correct else "Неверно 😔", show_alert=False)
+
+    if is_correct:
         points = 20
         await add_score(user_id, points, correct=True, reason="price_game", username=username)
         new_achievements = await check_and_unlock_achievements(user_id)
@@ -327,24 +331,65 @@ async def handle_price_game_answer(callback: CallbackQuery):
             response += "\n\n🏆 <b>Новые достижения:</b>"
             for ach in new_achievements:
                 response += f"\n{esc(ach['name'])} +{ach['reward']} баллов!"
-        await callback.answer("Верно! 🎉", show_alert=False)
     else:
         await add_score(user_id, 0, correct=False, reason="price_game", username=username)
-        response = (
-            f"❌ <b>Неверно.</b> Правильный ответ: <b>{correct}₽</b>"
-        )
+        response = f"❌ <b>Неверно.</b> Правильный ответ: <b>{correct}₽</b>"
         if link:
             response += f"\n\n🛒 <a href=\"{link}\">Всё равно посмотреть сделку</a>"
-        await callback.answer("Неверно 😔", show_alert=False)
+
+    # Отправляем результат в личку — не пытаемся редактировать пост канала
+    from publisher import get_bot
+    try:
+        await get_bot().send_message(user_id, response)
+    except Exception as e:
+        log.warning(f"pg answer send failed: {e}")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("sg:"))
+async def handle_screenshot_game_answer(callback: CallbackQuery):
+    """Обработать ответ на мини-игру 'угадай игру по скриншоту'."""
+    parts = callback.data.split(":", 2)
+    if len(parts) != 3:
+        await callback.answer("Ошибка данных", show_alert=True)
+        return
+
+    game_id = parts[1]
+    answer = parts[2]
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.first_name
+
+    # Сразу отвечаем на callback чтобы убрать "часики"
+    await callback.answer()
+
+    result = await check_screenshot_answer(user_id, game_id, answer, username=username)
+
+    if "error" in result:
+        await get_bot().send_message(user_id, f"ℹ️ {esc(result['error'])}")
+        return
+
+    is_correct = result["is_correct"]
+    correct_title = result["correct_title"]
+    points = result["points"]
+    new_achievements = result.get("new_achievements", [])
+
+    if is_correct:
+        score_data = await get_user_score(user_id)
+        balance = score_data.get("total_score", 0)
+        response = (
+            f"✅ <b>Верно!</b> Это <b>{esc(correct_title)}</b>\n"
+            f"💰 +{points} баллов  ·  Баланс: <b>{balance}</b> 🏆"
+        )
+        if new_achievements:
+            response += "\n\n🏆 <b>Новые достижения:</b>"
+            for ach in new_achievements:
+                response += f"\n{esc(ach['name'])} +{ach['reward']} баллов!"
+    else:
+        response = f"❌ <b>Неверно.</b> Правильный ответ: <b>{esc(correct_title)}</b>"
 
     try:
-        await callback.message.edit_text(
-            f"{callback.message.text}\n\n{response}",
-            reply_markup=None
-        )
+        await get_bot().send_message(user_id, response)
     except Exception as e:
-        log.warning(f"pg answer edit failed: {e}")
-        await callback.message.answer(response)
+        log.warning(f"sg answer send failed: {e}")
 
 
 @router.message(Command("profile"))
