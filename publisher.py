@@ -185,12 +185,18 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
             reasons.append(f"Отличные отзывы ({score}% положительных)")
         elif score >= 80:
             reasons.append(f"Хорошие отзывы ({score}%)")
+        elif score >= 70:
+            reasons.append(f"Смешанные отзывы ({score}%)")
+        else:
+            reasons.append(f"Рейтинг Steam: {score}%")
     
-    # Причина 2: Исторический минимум
+    # Причина 2: Исторический минимум или скидка
     if is_current_low:
         reasons.append("Исторический минимум цены")
     elif deal.discount >= 80:
         reasons.append("Очень жирная скидка")
+    elif deal.discount >= 60:
+        reasons.append(f"Хорошая скидка −{deal.discount}%")
     
     # Причина 3: Описание/жанр (короткое)
     if description:
@@ -199,7 +205,15 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         if short_desc:
             reasons.append(short_desc)
     elif deal.genres and len(deal.genres) > 0:
-        reasons.append(f"{deal.genres[0]}")
+        genres_str = ", ".join(deal.genres[:2])
+        reasons.append(genres_str)
+    
+    # Если причин всё ещё нет - добавляем базовые
+    if not reasons:
+        if deal.discount >= 50:
+            reasons.append(f"Скидка −{deal.discount}%")
+        if deal.store:
+            reasons.append(f"Доступно в {deal.store}")
     
     # Ограничиваем до 3 причин
     reasons = reasons[:3]
@@ -221,10 +235,14 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         verdict = "👉 <b>Хорошая игра, если нравится жанр</b>"
     elif rating and rating['score'] >= 70:
         verdict = "👉 Только фанатам жанра"
+    elif rating and rating['score'] >= 60:
+        verdict = "👉 Смешанные отзывы — на свой риск"
     elif deal.discount >= 80:
         verdict = "👉 <b>Почти даром — можно взять</b>"
+    elif deal.discount >= 60:
+        verdict = "👉 Хорошая скидка, но проверь отзывы"
     else:
-        verdict = "👉 Смотри по отзывам"
+        verdict = "👉 Проверь отзывы перед покупкой"
     
     lines.append(f"\n{verdict}")
 
