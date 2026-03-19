@@ -448,64 +448,102 @@ async def cmd_test_post(message: Message):
         import pytz, asyncio
 
         MSK = pytz.timezone("Europe/Moscow")
-        now = datetime.now(MSK).strftime("%d.%m.%Y")
         store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}.get(
             deal.store, "🕹"
         )
 
         glitch_info = await check_for_glitch(deal)
-        rating = historical_low = igdb_info = None
+        rating = historical_low = igdb_info = steam_desc = None
 
         if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
             appid = deal.deal_id.replace("steam_", "")
-            rating, historical_low, igdb_info = await asyncio.gather(
+            from enricher import get_steam_description
+            rating, historical_low, igdb_info, steam_desc = await asyncio.gather(
                 get_steam_rating(appid),
                 get_historical_low(appid),
                 get_game_info(deal.title),
+                get_steam_description(appid),
             )
         else:
             igdb_info = await get_game_info(deal.title)
 
-        theme_emoji, theme_name, theme_genres = get_daily_theme()
-        deal_genres_lower = [g.lower() for g in (deal.genres or [])]
-        theme_matches = not theme_genres or any(g in deal_genres_lower for g in theme_genres)
-        header_emoji = theme_emoji if theme_matches else "🎮"
-        header_name = theme_name if theme_matches else "СКИДКА ДНЯ"
+        is_current_low = bool(historical_low and historical_low.get("is_current_low"))
         old_price = await _localize_price(deal.old_price)
         new_price = await _localize_price(deal.new_price)
 
+        # НОВЫЙ ФОРМАТ ПОСТОВ
         lines = []
-        if glitch_info and glitch_info.get("severity") == "critical":
-            lines.append(f"🚨 <b>ОШИБКА ЦЕНЫ? СРОЧНО! · {now}</b>")
-        elif deal.is_free:
-            lines.append(f"🎁 <b>БЕСПЛАТНО · {now}</b>")
-        elif deal.discount >= 80:
-            lines.append(f"🔥 <b>ОГОНЬ-СКИДКА · {now}</b>")
-        else:
-            lines.append(f"{header_emoji} <b>{header_name.upper()} · {now}</b>")
-
-        lines.append(f"\n{store_emoji} <b>{esc(deal.title)}</b>")
-
+        adult_prefix = "🔞 " if (igdb_info and igdb_info.get("is_adult")) else ""
+        
+        # Строка 1: Название + скидка
         if deal.is_free:
-            lines.append("💸 <s>Платная</s>  →  🆓 <b>БЕСПЛАТНО</b>")
+            lines.append(f"🎁 <b>{adult_prefix}{esc(deal.title)} — БЕСПЛАТНО</b>")
         else:
-            lines.append(f"💰 <s>{esc(old_price)}</s>  →  ✅ <b>{esc(new_price)}</b>")
-            lines.append(f"🏷 Скидка: <b>−{deal.discount}%</b>")
-
+            lines.append(f"🔥 <b>{adult_prefix}{esc(deal.title)} — −{deal.discount}%</b>")
+        
+        # Строка 2: Цена
+        if deal.is_free:
+            if old_price and old_price not in ("—", "Платная", ""):
+                lines.append(f"💰 Было: {esc(old_price)} → <b>БЕСПЛАТНО</b>")
+            else:
+                lines.append(f"💰 <b>БЕСПЛАТНО</b>")
+        else:
+            lines.append(f"💰 Было: {esc(old_price)} → <b>{esc(new_price)}</b>")
+        
+        # Блок: Почему стоит взять (2-3 причины)
+        reasons = []
+        
+        # Причина 1: Рейтинг/популярность
         if rating:
-            score = rating["score"]
-            score_emoji = "🏆" if score >= 95 else "👍" if score >= 80 else "🙂"
-            lines.append(f"{score_emoji} Steam: <b>{score}%</b>")
-
-        if glitch_info:
-            lines.append(f"\n{format_glitch_alert(deal, glitch_info)}")
-
-        comment = generate_comment(deal, rating)
-        lines.append(f"\n💬 <i>{esc(comment)}</i>")
-
-        hashtags = genres_to_hashtags(deal.genres)
-        if hashtags:
-            lines.append(f"\n{hashtags}")
+            score = rating['score']
+            if score >= 95:
+                reasons.append("Одна из лучших игр по отзывам")
+            elif score >= 90:
+                reasons.append(f"Отличные отзывы ({score}% положительных)")
+            elif score >= 80:
+                reasons.append(f"Хорошие отзывы ({score}%)")
+        
+        # Причина 2: Исторический минимум
+        if is_current_low:
+            reasons.append("Исторический минимум цены")
+        elif deal.discount >= 80:
+            reasons.append("Очень жирная скидка")
+        
+        # Причина 3: Описание/жанр (короткое)
+        description = steam_desc
+        if description:
+            short_desc = description.split('.')[0][:80].strip()
+            if short_desc:
+                reasons.append(short_desc)
+        elif deal.genres and len(deal.genres) > 0:
+            reasons.append(f"{deal.genres[0]}")
+        
+        # Ограничиваем до 3 причин
+        reasons = reasons[:3]
+        
+        if reasons:
+            lines.append(f"\n🎮 <b>Почему стоит взять:</b>")
+            for reason in reasons:
+                lines.append(f"— {esc(reason)}")
+        
+        # ВЕРДИКТ (обязательно!)
+        verdict = ""
+        if deal.is_free:
+            verdict = "👉 <b>Бесплатно — забирай не думая!</b>"
+        elif rating and rating['score'] >= 90 and deal.discount >= 70:
+            verdict = "👉 <b>За такую цену — обязательно брать!</b>"
+        elif rating and rating['score'] >= 85:
+            verdict = "👉 <b>Отличная игра по хорошей цене</b>"
+        elif rating and rating['score'] >= 75:
+            verdict = "👉 <b>Хорошая игра, если нравится жанр</b>"
+        elif rating and rating['score'] >= 70:
+            verdict = "👉 Только фанатам жанра"
+        elif deal.discount >= 80:
+            verdict = "👉 <b>Почти даром — можно взять</b>"
+        else:
+            verdict = "👉 Смотри по отзывам"
+        
+        lines.append(f"\n{verdict}")
 
         lines.append(f"\n\n<i>🧪 Тестовый пост — в канал не отправлялся</i>")
         text = "\n".join(lines)
