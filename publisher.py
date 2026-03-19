@@ -156,56 +156,77 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     lines = []
     adult_prefix = "🔞 " if (igdb_info and igdb_info.get("is_adult")) else ""
     
-    # УПРОЩЁННЫЙ ЗАГОЛОВОК - убираем дату и лишние детали
-    if glitch_info and glitch_info.get('severity') == 'critical':
-        lines.append(f"🚨 <b>{adult_prefix}ОШИБКА ЦЕНЫ? СРОЧНО!</b>")
-    elif deal.is_free:
-        lines.append(f"🎁 <b>{adult_prefix}БЕСПЛАТНО — забирай прямо сейчас!</b>")
-    elif deal.discount >= 80:
-        lines.append(f"🔥 <b>{adult_prefix}ОГОНЬ! Скидка {deal.discount}% — почти даром!</b>")
-    elif deal.discount >= 50:
-        lines.append(f"💥 <b>{adult_prefix}Скидка {deal.discount}% — отличная цена!</b>")
+    # НОВЫЙ ФОРМАТ: КОРОТКИЙ И ЦЕПЛЯЮЩИЙ
+    
+    # Строка 1: Название + скидка
+    if deal.is_free:
+        lines.append(f"🎁 <b>{adult_prefix}{esc(deal.title)} — БЕСПЛАТНО</b>")
     else:
-        lines.append(f"🏷 <b>{adult_prefix}Скидка {deal.discount}%</b>")
-
-    # Название игры - КРУПНО, БЕЗ ЛИШНЕГО
-    lines.append(f"\n{store_emoji} <b>{esc(deal.title)}</b>")
-
-    # ЦЕНА - ГЛАВНОЕ, ЧТО ИНТЕРЕСУЕТ
+        lines.append(f"🔥 <b>{adult_prefix}{esc(deal.title)} — −{deal.discount}%</b>")
+    
+    # Строка 2: Цена
     if deal.is_free:
         if old_price and old_price not in ("—", "Платная", ""):
-            lines.append(f"\n💸 Обычно {esc(old_price)} — сейчас <b>БЕСПЛАТНО</b>")
+            lines.append(f"💰 Было: {esc(old_price)} → <b>БЕСПЛАТНО</b>")
         else:
-            lines.append(f"\n💸 <b>БЕСПЛАТНО</b>")
+            lines.append(f"💰 <b>БЕСПЛАТНО</b>")
     else:
-        lines.append(f"\n💰 <s>{esc(old_price)}</s>  →  <b>{esc(new_price)}</b>  (−{deal.discount}%)")
-
-    # РЕЙТИНГ - КОРОТКО И ЯСНО
+        lines.append(f"💰 Было: {esc(old_price)} → <b>{esc(new_price)}</b>")
+    
+    # Блок: Почему стоит взять (2-3 причины)
+    reasons = []
+    
+    # Причина 1: Рейтинг/популярность
     if rating:
         score = rating['score']
-        score_emoji = "🏆" if score >= 95 else "👍" if score >= 80 else "🙂"
-        lines.append(f"{score_emoji} Рейтинг Steam: <b>{score}%</b> положительных отзывов")
+        if score >= 95:
+            reasons.append("Одна из лучших игр по отзывам")
+        elif score >= 90:
+            reasons.append(f"Отличные отзывы ({score}% положительных)")
+        elif score >= 80:
+            reasons.append(f"Хорошие отзывы ({score}%)")
     
-    # ИСТОРИЧЕСКИЙ МИНИМУМ - если есть
+    # Причина 2: Исторический минимум
     if is_current_low:
-        lines.append(f"📉 <b>Исторический минимум цены!</b>")
-
-    # ОПИСАНИЕ - КОРОТКОЕ (до 200 символов)
-    description = steam_desc
+        reasons.append("Исторический минимум цены")
+    elif deal.discount >= 80:
+        reasons.append("Очень жирная скидка")
+    
+    # Причина 3: Описание/жанр (короткое)
     if description:
-        short_desc = description[:200].rstrip()
-        if len(description) > 200:
-            short_desc += "..."
-        lines.append(f"\n📖 {esc(short_desc)}")
-
-    # КОММЕНТАРИЙ БОТА - ЭМОЦИОНАЛЬНЫЙ
-    comment = generate_context_comment(deal, rating, igdb_info)
-    lines.append(f"\n💬 <i>{esc(comment)}</i>")
-
-    # ЖАНРЫ - только если есть
-    if deal.genres:
-        genres_str = ", ".join(deal.genres[:4])  # Максимум 4 жанра
-        lines.append(f"\n🎯 Жанры: {esc(genres_str)}")
+        # Берём первое предложение или до 80 символов
+        short_desc = description.split('.')[0][:80].strip()
+        if short_desc:
+            reasons.append(short_desc)
+    elif deal.genres and len(deal.genres) > 0:
+        reasons.append(f"{deal.genres[0]}")
+    
+    # Ограничиваем до 3 причин
+    reasons = reasons[:3]
+    
+    if reasons:
+        lines.append(f"\n🎮 <b>Почему стоит взять:</b>")
+        for reason in reasons:
+            lines.append(f"— {esc(reason)}")
+    
+    # ВЕРДИКТ (обязательно!)
+    verdict = ""
+    if deal.is_free:
+        verdict = "👉 <b>Бесплатно — забирай не думая!</b>"
+    elif rating and rating['score'] >= 90 and deal.discount >= 70:
+        verdict = "👉 <b>За такую цену — обязательно брать!</b>"
+    elif rating and rating['score'] >= 85:
+        verdict = "👉 <b>Отличная игра по хорошей цене</b>"
+    elif rating and rating['score'] >= 75:
+        verdict = "👉 <b>Хорошая игра, если нравится жанр</b>"
+    elif rating and rating['score'] >= 70:
+        verdict = "👉 Только фанатам жанра"
+    elif deal.discount >= 80:
+        verdict = "👉 <b>Почти даром — можно взять</b>"
+    else:
+        verdict = "👉 Смотри по отзывам"
+    
+    lines.append(f"\n{verdict}")
 
     text = "\n".join(lines)
 
