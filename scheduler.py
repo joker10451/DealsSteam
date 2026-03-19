@@ -135,9 +135,7 @@ async def _publish_top_day_post(deal, rating: Optional[dict], score: int) -> boo
     """Публикует пост с форматом ТОП ДНЯ."""
     import random
     from publisher import esc, _utm_link, _cb_id, get_bot, send_with_retry, _localize_price
-    from igdb import get_game_info
     from collage import make_collage
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
     
     # Вариативные заголовки
     top_labels = [
@@ -227,6 +225,7 @@ async def _publish_top_day_post(deal, rating: Optional[dict], score: int) -> boo
         photo = deal.image_url
     
     try:
+        from aiogram.types import BufferedInputFile
         if collage_bytes:
             file = BufferedInputFile(collage_bytes, filename="top_day.png")
             await send_with_retry(lambda: get_bot().send_photo(CHANNEL_ID, photo=file, caption=text, reply_markup=keyboard))
