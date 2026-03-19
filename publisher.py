@@ -223,8 +223,10 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         glitch_alert = format_glitch_alert(deal, glitch_info)
         lines.append(f"\n{glitch_alert}")
 
-    # Описание игры: Steam (русское) → IGDB (с переводом) → ничего
-    description = steam_desc or (igdb_info.get("description") if igdb_info else None)
+    # Описание игры: только Steam (русское), IGDB отключаем из-за плохих переводов
+    description = steam_desc
+    # IGDB описания отключены - часто получаются корявые переводы
+    # description = steam_desc or (igdb_info.get("description") if igdb_info else None)
     if description:
         lines.append(f"\n📖 <i>{esc(description)}</i>")
 

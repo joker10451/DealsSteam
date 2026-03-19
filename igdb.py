@@ -139,7 +139,25 @@ async def get_game_info(title: str) -> Optional[dict]:
     summary = game.get("summary", "")
     sentences = [s.strip() for s in summary.split(".") if len(s.strip()) > 15]
     description_en = ". ".join(sentences[:2]) + "." if sentences else None
-    description = await _translate_to_ru(description_en) if description_en else None
+    
+    # УЛУЧШЕНИЕ: ограничиваем длину описания и улучшаем перевод
+    if description_en:
+        # Обрезаем слишком длинные описания (макс 300 символов)
+        if len(description_en) > 300:
+            description_en = description_en[:297] + "..."
+        
+        # Переводим только если описание не слишком техническое
+        description = await _translate_to_ru(description_en)
+        
+        # Если перевод получился плохим (много английских слов), используем оригинал
+        if description and description != description_en:
+            # Проверяем качество перевода: если больше 30% латиницы - используем оригинал
+            latin_chars = sum(1 for c in description if c.isalpha() and ord(c) < 128)
+            total_chars = sum(1 for c in description if c.isalpha())
+            if total_chars > 0 and latin_chars / total_chars > 0.3:
+                description = None  # Плохой перевод, лучше не показывать
+    else:
+        description = None
 
     # Обложка — меняем размер на большой
     cover_url = None
