@@ -177,22 +177,27 @@ async def post_deal_to_vk(deal, rating: Optional[dict] = None, igdb_info: Option
             f"👉 {TG_CHANNEL_LINK}"
         )
 
-        # Картинка: групповой токен VK не поддерживает photos.getWallUploadServer (error 27).
-        # Используем link attachment — VK подтянет превью со страницы Steam/IGDB автоматически.
-        # Приоритет: Steam store page (богатое превью) > IGDB cover URL
-        link_attachment = None
-        if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
-            link_attachment = deal.link  # Steam страница — VK покажет capsule image
-        elif igdb_info and igdb_info.get("cover_url"):
-            link_attachment = igdb_info["cover_url"]
+        # Картинка: пытаемся загрузить через photos API
+        # Если не получается - публикуем без картинки (VK сам подтянет превью по ссылке в тексте)
+        image_url = None
+        if igdb_info and igdb_info.get("cover_url"):
+            image_url = igdb_info["cover_url"]
+        
+        attachments = []
+        if image_url:
+            photo_attachment = await _upload_photo(image_url)
+            if photo_attachment:
+                attachments.append(photo_attachment)
+            else:
+                log.warning(f"VK: не удалось загрузить фото для {deal.title}, постим без картинки")
 
         params = {
             "owner_id": -VK_GROUP_ID,
             "from_group": 1,
             "message": text,
         }
-        if link_attachment:
-            params["attachments"] = link_attachment
+        if attachments:
+            params["attachments"] = ",".join(attachments)
 
         result = await _vk_request("wall.post", params)
         log.debug(f"VK wall.post result: {result}")
