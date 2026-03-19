@@ -96,7 +96,9 @@ async def _check_and_post_impl() -> Optional[str]:
         errors.append(f"GamerPower: {e}")
 
     if errors:
-        await notify_admin("\n".join(errors))
+        # ОТКЛЮЧЕНО: не спамим админа ошибками парсеров
+        # await notify_admin("\n".join(errors))
+        log.warning(f"Ошибки парсеров (не отправлены админу): {errors}")
 
     if not all_deals:
         log.warning("Все парсеры вернули 0 скидок — публикация невозможна")
@@ -189,20 +191,21 @@ async def _check_and_post_impl() -> Optional[str]:
     _, _, theme_genres = get_daily_theme()
     paid.sort(key=lambda d: (theme_score(d, theme_genres), d.discount), reverse=True)
 
+    # ОТКЛЮЧЕНО: не спамим админа критическими ошибками цен
     # Алерт администратору о критических ошибках цен — возможность закупить ключи
-    if glitches:
-        for g in glitches[:3]:
-            glitch_info = await check_for_glitch(g)
-            if glitch_info and glitch_info.get("severity") == "critical":
-                await notify_admin(
-                    f"🚨 <b>ОШИБКА ЦЕНЫ — ЗАКУПИТЬ КЛЮЧИ!</b>\n\n"
-                    f"🎮 {g.title}\n"
-                    f"💥 Скидка: {g.discount}%\n"
-                    f"💰 Цена: {g.new_price} (было {g.old_price})\n"
-                    f"🔗 {g.link}\n\n"
-                    f"⚡️ Купи 10-20 копий — это призовой фонд магазина!\n"
-                    f"После покупки: /givekey [user_id] [ключ]"
-                )
+    # if glitches:
+    #     for g in glitches[:3]:
+    #         glitch_info = await check_for_glitch(g)
+    #         if glitch_info and glitch_info.get("severity") == "critical":
+    #             await notify_admin(
+    #                 f"🚨 <b>ОШИБКА ЦЕНЫ — ЗАКУПИТЬ КЛЮЧИ!</b>\n\n"
+    #                 f"🎮 {g.title}\n"
+    #                 f"💥 Скидка: {g.discount}%\n"
+    #                 f"💰 Цена: {g.new_price} (было {g.old_price})\n"
+    #                 f"🔗 {g.link}\n\n"
+    #                 f"⚡️ Купи 10-20 копий — это призовой фонд магазина!\n"
+    #                 f"После покупки: /givekey [user_id] [ключ]"
+    #             )
 
     # Приоритет: glitch'и > бесплатные > платные
     combined = glitches + free + paid

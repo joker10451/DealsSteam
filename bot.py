@@ -21,6 +21,7 @@ from scheduler import (
     sync_all_steam_wishlists, sync_all_steam_libraries,
     check_bot_health, run_garbage_collect, post_coop_digest,
 )
+from themed_collections import post_themed_collection
 
 from publisher import flush_notification_queue
 from free_game_monitor import check_epic_free_games
@@ -245,6 +246,21 @@ async def main():
         name="coop_digest"
     )
     log.info("Кооп-дайджест: каждую пятницу в 18:00 МСК")
+
+    # Weekend Themed Collections
+    scheduler.add_job(
+        lambda: post_themed_collection("weekend_coop"),
+        CronTrigger(day_of_week="sat", hour=11, minute=0, timezone=MSK),
+        name="weekend_coop_collection"
+    )
+    log.info("Подборка кооперативов: каждую субботу в 11:00 МСК")
+
+    scheduler.add_job(
+        lambda: post_themed_collection("budget_games"),
+        CronTrigger(day_of_week="sun", hour=15, minute=0, timezone=MSK),
+        name="budget_games_collection"
+    )
+    log.info("Подборка бюджетных игр: каждое воскресенье в 15:00 МСК")
 
     # Giveaway System Jobs
     from giveaways import check_ended_giveaways, check_giveaway_reminders

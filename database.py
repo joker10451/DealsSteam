@@ -136,8 +136,9 @@ async def init_db():
         await init_engagement_table(conn)
     
     # Инициализация таблиц мини-игр
-    from minigames import init_minigames_db
-    await init_minigames_db()
+    # ОТКЛЮЧЕНО: мини-игры ломают бота
+    # from minigames import init_minigames_db
+    # await init_minigames_db()
 
     # Инициализация таблицы ключей магазина
     await init_shop_keys_table()

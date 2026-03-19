@@ -87,6 +87,42 @@ async def cmd_digest(message: Message):
         await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
 
 
+@router.message(Command("collection"))
+async def cmd_collection(message: Message):
+    """Опубликовать тематическую подборку (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+    
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer(
+            "Использование: /collection <тема>\n\n"
+            "Доступные темы:\n"
+            "• weekend_coop — Кооперативы на выходные\n"
+            "• budget_games — Игры до 300₽\n"
+            "• story_rich — Игры с сюжетом\n"
+            "• indie_gems — Инди-жемчужины\n"
+            "• low_spec — Для слабых ПК\n"
+            "• short_games — Короткие игры"
+        )
+        return
+    
+    from themed_collections import post_themed_collection
+    
+    theme = args[1].strip()
+    status_msg = await message.answer(f"🔄 Формирую подборку '{theme}'...")
+    try:
+        success = await post_themed_collection(theme)
+        if success:
+            await status_msg.edit_text("✅ Готово.")
+        else:
+            await status_msg.edit_text("⚠️ Нет игр для этой подборки.")
+    except Exception as e:
+        log.error(f"Ошибка публикации подборки: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
+
+
 @router.message(Command("stats"))
 async def cmd_stats(message: Message):
     if not _admin_only(message):

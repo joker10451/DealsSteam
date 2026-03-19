@@ -244,26 +244,27 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
 
     text = "\n".join(lines)
 
+    # ОТКЛЮЧЕНО: мини-игры ломают бота
     # Для платных игр — сохраняем цену и добавляем кнопку мини-игры
-    price_game_button = None
-    if not deal.is_free:
-        try:
-            old_price_str = str(deal.old_price).replace("₽", "").replace(" ", "").replace(",", "").strip()
-            correct = int(float(old_price_str))
-            if correct > 0:
-                await save_price_game(
-                    deal.deal_id, correct,
-                    title=deal.title,
-                    new_price=str(deal.new_price),
-                    link=deal.link,
-                    discount=deal.discount,
-                )
-                price_game_button = InlineKeyboardButton(
-                    text="🎲 Угадай цену — заработай баллы!",
-                    callback_data=f"pg_start:{_cb_id(deal.deal_id)}"
-                )
-        except (ValueError, AttributeError):
-            pass
+    # price_game_button = None
+    # if not deal.is_free:
+    #     try:
+    #         old_price_str = str(deal.old_price).replace("₽", "").replace(" ", "").replace(",", "").strip()
+    #         correct = int(float(old_price_str))
+    #         if correct > 0:
+    #             await save_price_game(
+    #                 deal.deal_id, correct,
+    #                 title=deal.title,
+    #                 new_price=str(deal.new_price),
+    #                 link=deal.link,
+    #                 discount=deal.discount,
+    #             )
+    #             price_game_button = InlineKeyboardButton(
+    #                 text="🎲 Угадай цену — заработай баллы!",
+    #                 callback_data=f"pg_start:{_cb_id(deal.deal_id)}"
+    #             )
+    #     except (ValueError, AttributeError):
+    #         pass
 
     vote_row = [
         InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{_cb_id(deal.deal_id)}"),
@@ -274,8 +275,9 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         [InlineKeyboardButton(text=f"🛒 Открыть в {deal.store}", url=_utm_link(deal.link, deal.store))],
         vote_row,
     ]
-    if price_game_button:
-        rows.append([price_game_button])
+    # ОТКЛЮЧЕНО: кнопка мини-игры
+    # if price_game_button:
+    #     rows.append([price_game_button])
 
     # Кнопка "Отправить другу" — ведёт в бота, тот выдаёт персональную share-ссылку
     if BOT_USERNAME:
@@ -328,13 +330,14 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         await increment_metric("published")
         await engagement_impression(deal.deal_id, deal.title, deal.store, deal.discount)
         
+        # ОТКЛЮЧЕНО: мини-игры ломают бота
         # Случайно публикуем игру со скриншотом (20% шанс) — в фоне, не блокируем
-        import random
-        if random.random() < 0.2 and igdb_info and igdb_info.get("screenshots"):
-            async def _delayed_screenshot():
-                await asyncio.sleep(30)
-                await publish_screenshot_game(deal, igdb_info)
-            asyncio.create_task(_delayed_screenshot())
+        # import random
+        # if random.random() < 0.2 and igdb_info and igdb_info.get("screenshots"):
+        #     async def _delayed_screenshot():
+        #         await asyncio.sleep(30)
+        #         await publish_screenshot_game(deal, igdb_info)
+        #     asyncio.create_task(_delayed_screenshot())
 
         # Контекстный совет отключён
         # from tips import get_contextual_tip
