@@ -58,6 +58,190 @@ def theme_score(deal, theme_genres: list[str]) -> int:
     return 1 if any(g in deal_genres_lower for g in theme_genres) else 0
 
 
+async def publish_top_of_day() -> Optional[str]:
+    """
+    Публикует ТОП СКИДКУ ДНЯ — игру с максимальным score.
+    Возвращает название игры или None если нет достойных.
+    """
+    log.info("🏆 Поиск ТОП скидки дня...")
+    all_deals = []
+    
+    for fetcher in [get_steam_deals, get_epic_deals]:
+        try:
+            deals = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
+            all_deals.extend(deals)
+        except Exception as e:
+            log.error(f"Ошибка при сборе для ТОП дня: {e}")
+    
+    if not all_deals:
+        log.warning("Нет скидок для ТОП дня")
+        return None
+    
+    # Дедупликация
+    all_deals = deduplicate(all_deals)
+    
+    # Фильтруем бандлы
+    if FILTER_BUNDLES:
+        all_deals = [d for d in all_deals if "bundle" not in d.title.lower()]
+    
+    # Рассчитываем score для каждой игры
+    from publisher import _calculate_deal_score
+    scored_deals = []
+    
+    for deal in all_deals:
+        # Пропускаем уже опубликованные
+        if await is_already_posted(deal.deal_id):
+            continue
+        
+        # Получаем рейтинг для расчёта score
+        rating = None
+        if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
+            appid = deal.deal_id.replace("steam_", "")
+            rating = await get_steam_rating(appid)
+        
+        # Извлекаем цену в рублях
+        try:
+            new_price_rub = float(str(deal.new_price).replace("₽", "").replace(" ", "").replace(",", "").strip())
+        except (ValueError, AttributeError):
+            new_price_rub = 999999
+        
+        score = _calculate_deal_score(deal, rating, new_price_rub)
+        scored_deals.append((deal, rating, score))
+    
+    if not scored_deals:
+        log.warning("Нет неопубликованных скидок для ТОП дня")
+        return None
+    
+    # Находим игру с максимальным score
+    top_deal, top_rating, top_score = max(scored_deals, key=lambda x: x[2])
+    
+    # Не публикуем если score < 5
+    if top_score < 5:
+        log.info(f"ТОП дня пропущен: лучший score={top_score} < 5")
+        return None
+    
+    # Публикуем с особым форматом
+    success = await _publish_top_day_post(top_deal, top_rating, top_score)
+    
+    if success:
+        await mark_as_posted(top_deal.deal_id)
+        log.info(f"🏆 ТОП дня опубликован: {top_deal.title} (score={top_score})")
+        return top_deal.title
+    
+    return None
+
+
+async def _publish_top_day_post(deal, rating: Optional[dict], score: int) -> bool:
+    """Публикует пост с форматом ТОП ДНЯ."""
+    import random
+    from publisher import esc, _utm_link, _cb_id, get_bot, send_with_retry, _localize_price
+    from igdb import get_game_info
+    from collage import make_collage
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+    
+    # Вариативные заголовки
+    top_labels = [
+        "🏆 ТОП СКИДКА ДНЯ",
+        "🔥 ЛУЧШАЯ СКИДКА СЕГОДНЯ",
+        "💎 САМАЯ ВЫГОДНАЯ ИГРА ДНЯ",
+    ]
+    
+    header = random.choice(top_labels)
+    
+    # Получаем данные
+    igdb_info = await get_game_info(deal.title)
+    old_price = await _localize_price(deal.old_price)
+    new_price = await _localize_price(deal.new_price)
+    
+    lines = [f"<b>{header}</b>\n"]
+    
+    # Название + скидка
+    if deal.is_free:
+        lines.append(f"🎁 <b>{esc(deal.title)} — БЕСПЛАТНО</b>")
+    else:
+        lines.append(f"🔥 <b>{esc(deal.title)} — −{deal.discount}%</b>")
+    
+    # Цена
+    if deal.is_free:
+        lines.append(f"💰 <b>БЕСПЛАТНО</b>")
+    else:
+        lines.append(f"💰 {esc(old_price)} → <b>{esc(new_price)}</b>")
+    
+    # Описание (короткое и цепляющее)
+    descriptions_top = [
+        "Культовая игра с отличными отзывами",
+        "Одна из лучших в своём жанре",
+        "Очень затягивает с первых минут",
+        "Высокий рейтинг и куча контента",
+    ]
+    
+    short_desc = random.choice(descriptions_top)
+    if rating and rating['score'] >= 90:
+        short_desc += f" ({rating['score']}% положительных)"
+    
+    lines.append(f"\n🎮 {esc(short_desc)}")
+    
+    # Социальное доказательство
+    if rating and rating['score'] >= 90:
+        lines.append("⚡ Игроки в восторге")
+    
+    # Вердикт (только топовые)
+    verdicts = [
+        "👉 <b>ЗА ТАКУЮ ЦЕНУ — ГРЕХ НЕ ВЗЯТЬ</b>",
+        "👉 <b>ЭТО ПОДАРОК</b>",
+        "👉 <b>ОБЯЗАТЕЛЬНО БРАТЬ</b>",
+    ]
+    lines.append(f"\n{random.choice(verdicts)}")
+    
+    text = "\n".join(lines)
+    
+    # Кнопки
+    vote_row = [
+        InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{_cb_id(deal.deal_id)}"),
+        InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{_cb_id(deal.deal_id)}"),
+        InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"),
+    ]
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🛒 Открыть в {deal.store}", url=_utm_link(deal.link, deal.store))],
+        vote_row,
+    ])
+    
+    # Картинка
+    photo = None
+    collage_bytes = None
+    
+    if igdb_info:
+        urls = []
+        if igdb_info.get("cover_url"):
+            urls.append(igdb_info["cover_url"])
+        urls.extend(igdb_info.get("screenshots", [])[:3])
+        if deal.image_url:
+            urls.append(deal.image_url)
+        if len(urls) >= 2:
+            collage_bytes = await make_collage(urls[:4])
+        if not collage_bytes and igdb_info.get("cover_url"):
+            photo = igdb_info["cover_url"]
+    
+    if not photo and not collage_bytes:
+        photo = deal.image_url
+    
+    try:
+        if collage_bytes:
+            file = BufferedInputFile(collage_bytes, filename="top_day.png")
+            await send_with_retry(lambda: get_bot().send_photo(CHANNEL_ID, photo=file, caption=text, reply_markup=keyboard))
+        elif photo:
+            await send_with_retry(lambda: get_bot().send_photo(CHANNEL_ID, photo=photo, caption=text, reply_markup=keyboard))
+        else:
+            await send_with_retry(lambda: get_bot().send_message(CHANNEL_ID, text, reply_markup=keyboard, disable_web_page_preview=True))
+        
+        await increment_metric("published")
+        return True
+    except Exception as e:
+        log.error(f"Ошибка публикации ТОП дня: {e}")
+        return False
+
+
 async def check_and_post() -> Optional[str]:
     """Собирает скидки и публикует лучшую. Возвращает время публикации или None."""
     if _post_lock.locked():

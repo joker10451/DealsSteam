@@ -247,6 +247,15 @@ async def main():
     )
     log.info("Кооп-дайджест: каждую пятницу в 18:00 МСК")
 
+    # ТОП СКИДКА ДНЯ — каждый день в 20:00 МСК (вечерний прайм-тайм)
+    from scheduler import publish_top_of_day
+    scheduler.add_job(
+        publish_top_of_day,
+        CronTrigger(hour=20, minute=0, timezone=MSK),
+        name="top_of_day"
+    )
+    log.info("🏆 ТОП СКИДКА ДНЯ: каждый день в 20:00 МСК")
+
     # Weekend Themed Collections
     scheduler.add_job(
         lambda: post_themed_collection("weekend_coop"),

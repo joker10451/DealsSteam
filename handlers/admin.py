@@ -49,6 +49,30 @@ async def cmd_post(message: Message):
             _last_manual_post = time.time()
         await status_msg.edit_text("✅ Готово.")
     except Exception as e:
+        log.error(f"Ошибка /post: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
+
+
+@router.message(Command("topday"))
+async def cmd_top_day(message: Message):
+    """Опубликовать ТОП СКИДКУ ДНЯ (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    from scheduler import publish_top_of_day
+
+    status_msg = await message.answer("🏆 Ищу лучшую скидку дня...")
+    try:
+        game_title = await publish_top_of_day()
+        if game_title:
+            await status_msg.edit_text(f"✅ ТОП дня опубликован:\n<b>{esc(game_title)}</b>")
+        else:
+            await status_msg.edit_text("❌ Нет достойных игр для ТОП дня (score < 5)")
+    except Exception as e:
+        log.error(f"Ошибка /topday: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
+    except Exception as e:
         import traceback
         tb = traceback.format_exc()
         log.error(f"Ошибка ручной публикации:\n{tb}")
@@ -470,6 +494,16 @@ async def cmd_test_post(message: Message):
         is_current_low = bool(historical_low and historical_low.get("is_current_low"))
         old_price = await _localize_price(deal.old_price)
         new_price = await _localize_price(deal.new_price)
+        
+        # СКОРИНГ (для отображения в тесте)
+        try:
+            new_price_rub = float(str(deal.new_price).replace("₽", "").replace(" ", "").replace(",", "").strip())
+        except (ValueError, AttributeError):
+            new_price_rub = 999999
+        
+        # Импортируем функцию скоринга из publisher
+        from publisher import _calculate_deal_score
+        deal_score = _calculate_deal_score(deal, rating, new_price_rub)
 
         # НОВЫЙ ФОРМАТ ПОСТОВ
         lines = []
@@ -490,86 +524,75 @@ async def cmd_test_post(message: Message):
         else:
             lines.append(f"💰 Было: {esc(old_price)} → <b>{esc(new_price)}</b>")
         
-        # Блок: Почему стоит взять (2-3 причины)
-        reasons = []
+        # УМНОЕ ОПИСАНИЕ (не из Steam, а из словаря)
+        import random
         
-        # Причина 1: Рейтинг/популярность
-        if rating:
-            score = rating['score']
-            if score >= 95:
-                reasons.append("Одна из лучших игр по отзывам")
-            elif score >= 90:
-                reasons.append(f"Отличные отзывы ({score}% положительных)")
-            elif score >= 80:
-                reasons.append(f"Хорошие отзывы ({score}%)")
-            elif score >= 70:
-                reasons.append(f"Смешанные отзывы ({score}%)")
-            else:
-                reasons.append(f"Рейтинг Steam: {score}%")
+        descriptions_top = [
+            "Одна из лучших игр в своём жанре",
+            "Культовая игра с отличными отзывами",
+            "Очень затягивает с первых минут",
+            "Высокий рейтинг и куча контента",
+        ]
         
-        # Причина 2: Исторический минимум или скидка
-        if is_current_low:
-            reasons.append("Исторический минимум цены")
-        elif deal.discount >= 80:
-            reasons.append("Очень жирная скидка")
-        elif deal.discount >= 60:
-            reasons.append(f"Хорошая скидка −{deal.discount}%")
+        descriptions_good = [
+            "Отличный вариант за свои деньги",
+            "Игроки очень хвалят",
+            "Качественная игра с хорошими отзывами",
+            "Стоящая игра по хорошей цене",
+        ]
         
-        # Причина 3: Описание/жанр (короткое)
-        description = steam_desc
-        if description:
-            short_desc = description.split('.')[0][:80].strip()
-            if short_desc:
-                reasons.append(short_desc)
-        elif deal.genres and len(deal.genres) > 0:
-            genres_str = ", ".join(deal.genres[:2])
-            reasons.append(genres_str)
+        descriptions_ok = [
+            "Интересный вариант для фанатов жанра",
+            "Неплохая игра со смешанными отзывами",
+            "Может зайти, если нравится жанр",
+        ]
         
-        # Если причин всё ещё нет - добавляем базовые
-        if not reasons:
-            if deal.discount >= 50:
-                reasons.append(f"Скидка −{deal.discount}%")
-            if deal.store:
-                reasons.append(f"Доступно в {deal.store}")
+        # Выбираем описание в зависимости от deal_score
+        if deal_score >= 6:
+            short_desc = random.choice(descriptions_top)
+        elif deal_score >= 4:
+            short_desc = random.choice(descriptions_good)
+        else:
+            short_desc = random.choice(descriptions_ok)
         
-        # Ограничиваем до 3 причин
-        reasons = reasons[:3]
+        # Добавляем рейтинг если есть
+        if rating and rating['score'] >= 80:
+            short_desc += f" ({rating['score']}% положительных)"
         
-        if reasons:
-            lines.append(f"\n🎮 <b>Почему стоит взять:</b>")
-            for reason in reasons:
-                lines.append(f"— {esc(reason)}")
+        lines.append(f"\n🎮 {esc(short_desc)}")
         
-        # ВЕРДИКТ (обязательно!)
-        verdict = ""
+        # ВЕРДИКТ С ЭМОЦИЕЙ (зависит от deal_score)
+        verdicts_top = [
+            "👉 <b>ГРЕХ НЕ ВЗЯТЬ</b>",
+            "👉 <b>ЭТО ПОДАРОК</b>",
+            "👉 <b>ЗА ТАКУЮ ЦЕНУ — ТОП</b>",
+            "👉 <b>ОБЯЗАТЕЛЬНО БРАТЬ</b>",
+        ]
+        
+        verdicts_good = [
+            "👉 <b>СТОИТ ВЗЯТЬ</b>",
+            "👉 <b>Отличная цена</b>",
+            "👉 <b>Хорошая сделка</b>",
+        ]
+        
+        verdicts_ok = [
+            "👉 Только если нравится жанр",
+            "👉 Проверь отзывы перед покупкой",
+        ]
+        
         if deal.is_free:
             verdict = "👉 <b>Бесплатно — забирай не думая!</b>"
-        elif rating and rating['score'] >= 90 and deal.discount >= 70:
-            verdict = "👉 <b>За такую цену — обязательно брать!</b>"
-        elif rating and rating['score'] >= 85:
-            verdict = "👉 <b>Отличная игра по хорошей цене</b>"
-        elif rating and rating['score'] >= 75:
-            verdict = "👉 <b>Хорошая игра, если нравится жанр</b>"
-        elif rating and rating['score'] >= 70:
-            verdict = "👉 Только фанатам жанра"
-        elif rating and rating['score'] >= 60:
-            verdict = "👉 Смешанные отзывы — на свой риск"
-        elif deal.discount >= 80:
-            verdict = "👉 <b>Почти даром — можно взять</b>"
-        elif deal.discount >= 60:
-            verdict = "👉 Хорошая скидка, но проверь отзывы"
+        elif deal_score >= 6:
+            verdict = random.choice(verdicts_top)
+        elif deal_score >= 4:
+            verdict = random.choice(verdicts_good)
         else:
-            verdict = "👉 Проверь отзывы перед покупкой"
-        
-        lines.append(f"\n{verdict}")
-        elif deal.discount >= 80:
-            verdict = "👉 <b>Почти даром — можно взять</b>"
-        else:
-            verdict = "👉 Смотри по отзывам"
+            verdict = random.choice(verdicts_ok)
         
         lines.append(f"\n{verdict}")
 
         lines.append(f"\n\n<i>🧪 Тестовый пост — в канал не отправлялся</i>")
+        lines.append(f"<i>📊 Score: {deal_score}/8 {'(ТОП)' if deal_score >= 6 else '(НОРМ)' if deal_score >= 4 else '(СЛАБО - не будет опубликовано)'}</i>")
         text = "\n".join(lines)
 
         keyboard = InlineKeyboardMarkup(
