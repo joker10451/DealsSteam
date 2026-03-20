@@ -173,6 +173,11 @@ async def main():
             server.last_post_time = post_time
 
     for hour, minute in POST_TIMES:
+        # Пропускаем 20:00 — в это время публикуется ТОП ДНЯ
+        if hour == 20 and minute == 0:
+            log.info(f"Пропущено {hour:02d}:{minute:02d} МСК (зарезервировано для ТОП ДНЯ)")
+            continue
+            
         scheduler.add_job(
             _check_and_post_with_time,
             CronTrigger(hour=hour, minute=minute, timezone=MSK),
@@ -249,8 +254,16 @@ async def main():
 
     # ТОП СКИДКА ДНЯ — каждый день в 20:00 МСК (вечерний прайм-тайм)
     from scheduler import publish_top_of_day
+    
+    async def _publish_top_with_time():
+        """Обёртка для ТОП ДНЯ с обновлением времени поста."""
+        game_title = await publish_top_of_day()
+        if game_title:
+            from datetime import datetime
+            server.last_post_time = datetime.now(MSK).strftime("%d.%m.%Y %H:%M МСК")
+    
     scheduler.add_job(
-        publish_top_of_day,
+        _publish_top_with_time,
         CronTrigger(hour=20, minute=0, timezone=MSK),
         name="top_of_day"
     )

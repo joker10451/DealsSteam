@@ -125,12 +125,6 @@ async def publish_top_of_day() -> Optional[str]:
     
     if success:
         await mark_as_posted(top_deal.deal_id)
-        
-        # Обновляем время последнего поста для healthcheck
-        import server
-        from datetime import datetime
-        server.last_post_time = datetime.now(MSK).strftime("%d.%m.%Y %H:%M МСК")
-        
         log.info(f"🏆 ТОП дня опубликован: {top_deal.title} (score={top_score})")
         return top_deal.title
     
