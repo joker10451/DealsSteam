@@ -175,8 +175,9 @@ async def _publish_top_day_post(deal, rating: Optional[dict], score: int) -> boo
     descriptions_top = [
         "Культовая игра с отличными отзывами",
         "Одна из лучших в своём жанре",
-        "Очень затягивает с первых минут",
+        "Сильный сюжет и атмосфера",
         "Высокий рейтинг и куча контента",
+        "100+ часов геймплея",
     ]
     
     short_desc = random.choice(descriptions_top)
@@ -191,10 +192,24 @@ async def _publish_top_day_post(deal, rating: Optional[dict], score: int) -> boo
     
     # Вердикт (только топовые)
     verdicts = [
-        "👉 <b>ЗА ТАКУЮ ЦЕНУ — ГРЕХ НЕ ВЗЯТЬ</b>",
+        "👉 <b>ЗА ТАКУЮ ЦЕНУ — ОБЯЗАТЕЛЬНО БРАТЬ</b>",
         "👉 <b>ЭТО ПОДАРОК</b>",
-        "👉 <b>ОБЯЗАТЕЛЬНО БРАТЬ</b>",
+        "👉 <b>БРАТЬ НЕ ДУМАЯ</b>",
     ]
+    
+    # Усиливаем если цена очень низкая
+    try:
+        price_rub = float(str(deal.new_price).replace("₽", "").replace(" ", "").replace(",", "").strip())
+        if price_rub <= 100:
+            verdicts.append("👉 <b>ПОЧТИ БЕСПЛАТНО — БРАТЬ</b>")
+        elif price_rub <= 300:
+            verdicts.append("👉 <b>ДЕШЕВЛЕ ОБЕДА — БРАТЬ</b>")
+    except:
+        pass
+    
+    if deal.discount >= 85:
+        verdicts.append("👉 <b>ЖИРНАЯ СКИДКА — НЕ УПУСТИ</b>")
+    
     lines.append(f"\n{random.choice(verdicts)}")
     
     text = "\n".join(lines)
