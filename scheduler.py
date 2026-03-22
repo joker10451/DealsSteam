@@ -14,7 +14,7 @@ from config import (
     FILTER_ADULT, FILTER_BUNDLES, MIN_PRICE_RUB,
 )
 from database import (
-    is_already_posted, mark_as_posted, cleanup_old_records,
+    is_already_posted, is_title_recently_posted, mark_as_posted, cleanup_old_records,
     get_weekly_top, get_top_voted,
     get_all_genre_subscribers_for_deal,
     increment_metric,
@@ -317,6 +317,10 @@ async def _check_and_post_impl() -> Optional[str]:
     for deal in all_deals:
         if await is_already_posted(deal.deal_id):
             log.debug(f"Уже опубликовано: {deal.title} ({deal.deal_id})")
+            continue
+
+        if await is_title_recently_posted(deal.title):
+            log.debug(f"Название недавно публиковалось (14д): {deal.title}")
             continue
 
         # Фильтр бандлов
