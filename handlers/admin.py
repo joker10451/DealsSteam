@@ -415,195 +415,59 @@ async def cmd_test_post(message: Message):
 
     status_msg = await message.answer("🔄 Собираю скидки для теста...")
 
-    from parsers.steam import get_steam_deals
-    from parsers.epic import get_epic_deals
-    from config import MIN_DISCOUNT_PERCENT, FILTER_BUNDLES
-    from database import is_already_posted
-    from publisher import get_bot
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    import random
-
     try:
-        all_deals = []
-        debug_lines = []
-        for fetcher in [get_steam_deals, get_epic_deals]:
-            name = fetcher.__name__
-            try:
-                fetched = await fetcher(min_discount=MIN_DISCOUNT_PERCENT)
-                all_deals.extend(fetched)
-                debug_lines.append(f"✅ {name}: {len(fetched)} шт.")
-            except Exception as e:
-                debug_lines.append(f"❌ {name}: {e}")
+        from parsers.steam import get_steam_deals
+        from parsers.epic import get_epic_deals
+        from config import MIN_DISCOUNT_PERCENT, FILTER_BUNDLES
+        from database import is_already_posted
+        from publisher import publish_single, get_bot
+        from smart_filter import should_publish_deal, _is_non_game
+        from enricher import get_steam_rating
+        from igdb import get_game_info
+        import config, random, asyncio
 
-        await status_msg.edit_text("🔄 Парсинг:\n" + "\n".join(debug_lines))
+        all_deals = []
+        for fetcher in [get_steam_deals, get_epic_deals]:
+            try:
+                all_deals.extend(await fetcher(min_discount=MIN_DISCOUNT_PERCENT))
+            except Exception:
+                pass
 
         if FILTER_BUNDLES:
             all_deals = [d for d in all_deals if "bundle" not in d.title.lower()]
 
-        # Фильтруем уже опубликованные
-        fresh = []
-        for d in all_deals:
-            if not await is_already_posted(d.deal_id):
-                fresh.append(d)
+        # Фильтр DLC/саундтреков
+        all_deals = [d for d in all_deals if not _is_non_game(d.title)]
 
-        # Если все уже опубликованы — берём из всех
-        pool = fresh if fresh else all_deals
-        if not pool:
-            await status_msg.edit_text(
-                "❌ Нет подходящих скидок прямо сейчас.\n\n" + "\n".join(debug_lines)
-            )
+        if not all_deals:
+            await status_msg.edit_text("❌ Нет подходящих скидок прямо сейчас.")
             return
 
-        deal = random.choice(pool)
+        # Берём случайную сделку из топ-10 по скидке
+        all_deals.sort(key=lambda d: d.discount, reverse=True)
+        deal = random.choice(all_deals[:10])
 
-        # Импортируем форматирование из нужных модулей
-        from publisher import (
-            esc,
-            get_daily_theme,
-            _localize_price,
-        )
-        from enricher import generate_comment, genres_to_hashtags
-        from collage import make_collage
-        from enricher import get_steam_rating, get_historical_low
-        from igdb import get_game_info
-        from price_glitch import check_for_glitch, format_glitch_alert
-        from currency import to_rubles
-        from datetime import datetime
-        import pytz, asyncio
+        await status_msg.edit_text(f"🤖 Генерирую пост для <b>{esc(deal.title)}</b>...")
 
-        MSK = pytz.timezone("Europe/Moscow")
-        store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}.get(
-            deal.store, "🕹"
-        )
+        # Временно подменяем CHANNEL_ID на личку админа
+        original_channel_id = config.CHANNEL_ID
+        config.CHANNEL_ID = message.from_user.id
 
-        glitch_info = await check_for_glitch(deal)
-        rating = historical_low = igdb_info = steam_desc = None
+        try:
+            ok, _ = await publish_single(deal, is_priority=True)
+        finally:
+            config.CHANNEL_ID = original_channel_id
 
-        if deal.store == "Steam" and deal.deal_id.startswith("steam_"):
-            appid = deal.deal_id.replace("steam_", "")
-            from enricher import get_steam_description
-            rating, historical_low, igdb_info, steam_desc = await asyncio.gather(
-                get_steam_rating(appid),
-                get_historical_low(appid),
-                get_game_info(deal.title),
-                get_steam_description(appid),
+        if ok:
+            await status_msg.edit_text(
+                f"✅ Тестовый пост отправлен!\n"
+                f"<i>Игра: {esc(deal.title)} | -{deal.discount}%</i>"
             )
         else:
-            igdb_info = await get_game_info(deal.title)
-
-        is_current_low = bool(historical_low and historical_low.get("is_current_low"))
-        old_price = await _localize_price(deal.old_price)
-        new_price = await _localize_price(deal.new_price)
-        
-        # СКОРИНГ (для отображения в тесте)
-        try:
-            new_price_rub = float(str(deal.new_price).replace("₽", "").replace(" ", "").replace(",", "").strip())
-        except (ValueError, AttributeError):
-            new_price_rub = 999999
-        
-        # Импортируем функцию скоринга из publisher
-        from publisher import _calculate_deal_score
-        deal_score = _calculate_deal_score(deal, rating, new_price_rub)
-
-        adult_prefix = "🔞 " if (igdb_info and igdb_info.get("is_adult")) else ""
-
-        # Пробуем AI-генерацию
-        from ai_writer import generate_post_text
-        await status_msg.edit_text("🤖 Генерирую текст через AI...")
-        ai_text = await generate_post_text(
-            title=deal.title,
-            old_price=str(deal.old_price),
-            new_price=str(deal.new_price),
-            discount=deal.discount,
-            is_free=deal.is_free,
-            rating_score=rating["score"] if rating else None,
-            genres=deal.genres or [],
-            igdb_description=igdb_info.get("description") if igdb_info else None,
-        )
-
-        if ai_text:
-            if adult_prefix:
-                ai_text = f"{adult_prefix}\n{ai_text}"
-            text = ai_text
-            ai_label = "✅ AI (Groq)"
-        else:
-            # Fallback шаблон
-            import random
-            lines = []
-            if deal.is_free:
-                lines.append(f"🎁 <b>{adult_prefix}{esc(deal.title)} — БЕСПЛАТНО</b>")
-            else:
-                lines.append(f"🔥 <b>{adult_prefix}{esc(deal.title)} — −{deal.discount}%</b>")
-            if deal.is_free:
-                lines.append(f"💰 <b>БЕСПЛАТНО</b>" if old_price in ("—", "Платная", "") else f"💰 Было: {esc(old_price)} → <b>БЕСПЛАТНО</b>")
-            else:
-                lines.append(f"💰 Было: {esc(old_price)} → <b>{esc(new_price)}</b>")
-            lines.append(f"\n🎮 Отличный вариант за свои деньги")
-            lines.append(f"\n👉 <b>СТОИТ ВЗЯТЬ</b>")
-            text = "\n".join(lines)
-            ai_label = "⚠️ Fallback (AI недоступен)"
-
-        text += f"\n\n<i>🧪 Тестовый пост — в канал не отправлялся</i>\n<i>📊 Score: {deal_score}/8 | {ai_label}</i>"
-
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=f"🛒 Открыть в {deal.store}", url=deal.link
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🔥 0", callback_data=f"vote:fire:{deal.deal_id[:40]}"
-                    ),
-                    InlineKeyboardButton(
-                        text="💩 0", callback_data=f"vote:poop:{deal.deal_id[:40]}"
-                    ),
-                    InlineKeyboardButton(
-                        text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"
-                    ),
-                ],
-            ]
-        )
-
-        bot = get_bot()
-
-        # Логика фото — такая же как в publish_single
-        from collage import make_collage
-        from aiogram.types import BufferedInputFile
-
-        photo = None
-        collage_bytes = None
-
-        if igdb_info:
-            urls = []
-            if igdb_info.get("cover_url"):
-                urls.append(igdb_info["cover_url"])
-            urls.extend(igdb_info.get("screenshots", [])[:3])
-            if deal.image_url:
-                urls.append(deal.image_url)
-            if len(urls) >= 2:
-                collage_bytes = await make_collage(urls[:4])
-            if not collage_bytes and igdb_info.get("cover_url"):
-                photo = igdb_info["cover_url"]
-
-        if not photo and not collage_bytes:
-            photo = deal.image_url
-        if not photo and not collage_bytes:
-            if deal.deal_id.startswith("steam_"):
-                appid = deal.deal_id.replace("steam_", "")
-                if appid.isdigit():
-                    photo = f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg"
-
-        if collage_bytes:
-            file = BufferedInputFile(collage_bytes, filename="collage.png")
-            await bot.send_photo(message.from_user.id, photo=file, caption=text, reply_markup=keyboard)
-        elif photo:
-            await bot.send_photo(message.from_user.id, photo=photo, caption=text, reply_markup=keyboard)
-        else:
-            await bot.send_message(message.from_user.id, text, reply_markup=keyboard, disable_web_page_preview=True)
-
-        await status_msg.edit_text("✅ Тестовый пост отправлен тебе в личку.\n\n<i>💡 В реальном посте под ним будет кнопка «🎲 Угадай цену»</i>")
+            await status_msg.edit_text(
+                f"⚠️ publish_single вернул False для <b>{esc(deal.title)}</b> (score слишком низкий или ошибка).\n"
+                f"Попробуй ещё раз — возьмётся другая игра."
+            )
 
     except Exception as e:
         log.error(f"Ошибка тестового поста: {e}")
