@@ -151,13 +151,14 @@ def _calculate_deal_score(deal, rating: Optional[dict], new_price_rub: float) ->
     return score
 
 
-async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_priority: bool = False) -> tuple[bool, Optional[dict]]:
+async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_priority: bool = False, target_chat_id: Optional[int] = None) -> tuple[bool, Optional[dict]]:
     """
-    Публикует сделку в канал.
+    Публикует сделку в канал (или в target_chat_id если задан — для тестов).
     
     Returns:
         (True, historical_low) если публикация успешна, (False, None) при ошибке
     """
+    chat_id = target_chat_id if target_chat_id is not None else CHANNEL_ID
     now = datetime.now(MSK).strftime("%d.%m.%Y")
     store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}.get(deal.store, "🕹")
     glitch_info = await check_for_glitch(deal)
@@ -404,11 +405,11 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         if collage_bytes:
             from aiogram.types import BufferedInputFile
             file = BufferedInputFile(collage_bytes, filename="collage.png")
-            await send_with_retry(lambda: get_bot().send_photo(CHANNEL_ID, photo=file, caption=text, reply_markup=keyboard))
+            await send_with_retry(lambda: get_bot().send_photo(chat_id, photo=file, caption=text, reply_markup=keyboard))
         elif photo:
-            await send_with_retry(lambda: get_bot().send_photo(CHANNEL_ID, photo=photo, caption=text, reply_markup=keyboard))
+            await send_with_retry(lambda: get_bot().send_photo(chat_id, photo=photo, caption=text, reply_markup=keyboard))
         else:
-            await send_with_retry(lambda: get_bot().send_message(CHANNEL_ID, text, reply_markup=keyboard, disable_web_page_preview=True))
+            await send_with_retry(lambda: get_bot().send_message(chat_id, text, reply_markup=keyboard, disable_web_page_preview=True))
 
         log.info(f"Опубликовано: {deal.title}")
         await increment_metric("published")

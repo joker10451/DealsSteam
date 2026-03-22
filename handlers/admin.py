@@ -424,7 +424,7 @@ async def cmd_test_post(message: Message):
         from smart_filter import should_publish_deal, _is_non_game
         from enricher import get_steam_rating
         from igdb import get_game_info
-        import config, random, asyncio
+        import random, asyncio
 
         all_deals = []
         for fetcher in [get_steam_deals, get_epic_deals]:
@@ -449,14 +449,7 @@ async def cmd_test_post(message: Message):
 
         await status_msg.edit_text(f"🤖 Генерирую пост для <b>{esc(deal.title)}</b>...")
 
-        # Временно подменяем CHANNEL_ID на личку админа
-        original_channel_id = config.CHANNEL_ID
-        config.CHANNEL_ID = message.from_user.id
-
-        try:
-            ok, _ = await publish_single(deal, is_priority=True)
-        finally:
-            config.CHANNEL_ID = original_channel_id
+        ok, _ = await publish_single(deal, is_priority=True, target_chat_id=message.from_user.id)
 
         if ok:
             await status_msg.edit_text(
