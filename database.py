@@ -154,6 +154,16 @@ async def is_already_posted(deal_id: str) -> bool:
     return row is not None
 
 
+async def is_title_recently_posted(title: str, days: int = 14) -> bool:
+    """Проверяет публиковалась ли игра с таким названием за последние N дней."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT 1 FROM posted_deals WHERE LOWER(title) = LOWER($1) AND posted_at > NOW() - INTERVAL '1 day' * $2",
+        title, days
+    )
+    return row is not None
+
+
 async def mark_as_posted(deal_id: str, title: str, store: str, discount: int = 0, link: str = "", old_price: str = "", new_price: str = ""):
     pool = await get_pool()
     await pool.execute(
