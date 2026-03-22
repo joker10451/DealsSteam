@@ -25,6 +25,7 @@ from collage import make_collage
 from currency import to_rubles, format_rub
 from price_glitch import check_for_glitch, format_glitch_alert
 from smart_filter import generate_context_comment
+from ai_writer import generate_post_text
 
 log = logging.getLogger(__name__)
 MSK = pytz.timezone("Europe/Moscow")
@@ -200,10 +201,13 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     
     # СКОРИНГ И ФИЛЬТРАЦИЯ
     # Извлекаем цену в рублях для расчёта score
-    try:
-        new_price_rub = float(str(deal.new_price).replace("₽", "").replace(" ", "").replace(",", "").strip())
-    except (ValueError, AttributeError):
-        new_price_rub = 999999  # Если не удалось распарсить — считаем дорогой
+    if deal.is_free:
+        new_price_rub = 0.0
+    else:
+        try:
+            new_price_rub = float(str(deal.new_price).replace("₽", "").replace(" ", "").replace(",", "").strip())
+        except (ValueError, AttributeError):
+            new_price_rub = 999999  # Если не удалось распарсить — считаем дорогой
     
     score = _calculate_deal_score(deal, rating, new_price_rub)
     
@@ -214,102 +218,117 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
 
     lines = []
     adult_prefix = "🔞 " if (igdb_info and igdb_info.get("is_adult")) else ""
-    
-    # НОВЫЙ ФОРМАТ: КОРОТКИЙ И ЦЕПЛЯЮЩИЙ
-    
-    # Строка 1: Название + скидка
-    if deal.is_free:
-        lines.append(f"🎁 <b>{adult_prefix}{esc(deal.title)} — БЕСПЛАТНО</b>")
-    else:
-        lines.append(f"🔥 <b>{adult_prefix}{esc(deal.title)} — −{deal.discount}%</b>")
-    
-    # Строка 2: Цена
-    if deal.is_free:
-        if old_price and old_price not in ("—", "Платная", ""):
-            lines.append(f"💰 Было: {esc(old_price)} → <b>БЕСПЛАТНО</b>")
-        else:
-            lines.append(f"💰 <b>БЕСПЛАТНО</b>")
-    else:
-        lines.append(f"💰 Было: {esc(old_price)} → <b>{esc(new_price)}</b>")
-    
-    # УМНОЕ ОПИСАНИЕ (не из Steam, а из словаря)
-    import random
-    
-    descriptions_top = [
-        "Культовая игра с отличными отзывами",
-        "Одна из лучших в своём жанре",
-        "Сильный сюжет и атмосфера",
-        "Высокий рейтинг и куча контента",
-        "100+ часов геймплея",
-    ]
-    
-    descriptions_good = [
-        "Отличный вариант за свои деньги",
-        "Игроки очень хвалят геймплей",
-        "Качественная игра с хорошими отзывами",
-        "Затягивает с первых минут",
-        "Открытый мир и свобода действий",
-    ]
-    
-    descriptions_ok = [
-        "Интересный вариант для фанатов жанра",
-        "Неплохая игра со смешанными отзывами",
-        "Может зайти, если нравится жанр",
-    ]
-    
-    # Выбираем описание в зависимости от deal_score
-    if score >= 6:
-        short_desc = random.choice(descriptions_top)
-    elif score >= 4:
-        short_desc = random.choice(descriptions_good)
-    else:
-        short_desc = random.choice(descriptions_ok)
-    
-    # Добавляем рейтинг если есть
-    if rating and rating['score'] >= 80:
-        short_desc += f" ({rating['score']}% положительных)"
-    
-    lines.append(f"\n🎮 {esc(short_desc)}")
-    
-    # ВЕРДИКТ С ЭМОЦИЕЙ (зависит от deal_score)
-    verdicts_top = [
-        "👉 <b>ЗА ТАКУЮ ЦЕНУ — ОБЯЗАТЕЛЬНО БРАТЬ</b>",
-        "👉 <b>ЭТО ПОДАРОК</b>",
-        "👉 <b>БРАТЬ НЕ ДУМАЯ</b>",
-    ]
-    
-    # Усиливаем вердикт если цена очень низкая или скидка огромная
-    if new_price_rub <= 100:
-        verdicts_top.append("👉 <b>ПОЧТИ БЕСПЛАТНО — БРАТЬ</b>")
-    elif new_price_rub <= 300:
-        verdicts_top.append("👉 <b>ДЕШЕВЛЕ ОБЕДА — БРАТЬ</b>")
-    
-    if deal.discount >= 85:
-        verdicts_top.append("👉 <b>ЖИРНАЯ СКИДКА — НЕ УПУСТИ</b>")
-    
-    verdicts_good = [
-        "👉 <b>СТОИТ ВЗЯТЬ</b>",
-        "👉 <b>Отличная цена</b>",
-        "👉 <b>Хорошая сделка</b>",
-    ]
-    
-    verdicts_ok = [
-        "👉 Только если нравится жанр",
-        "👉 Проверь отзывы перед покупкой",
-    ]
-    
-    if deal.is_free:
-        verdict = "👉 <b>Бесплатно — забирай не думая!</b>"
-    elif score >= 6:
-        verdict = random.choice(verdicts_top)
-    elif score >= 4:
-        verdict = random.choice(verdicts_good)
-    else:
-        verdict = random.choice(verdicts_ok)
-    
-    lines.append(f"\n{verdict}")
 
-    text = "\n".join(lines)
+    # Пробуем сгенерировать текст через AI (Groq)
+    ai_text = await generate_post_text(
+        title=deal.title,
+        old_price=str(deal.old_price),
+        new_price=str(deal.new_price),
+        discount=deal.discount,
+        is_free=deal.is_free,
+        rating_score=rating["score"] if rating else None,
+        genres=deal.genres or [],
+        igdb_description=igdb_info.get("description") if igdb_info else None,
+    )
+
+    if ai_text:
+        # AI сгенерировал текст — используем его, добавляем только adult-префикс если нужно
+        if adult_prefix:
+            ai_text = f"{adult_prefix}\n{ai_text}"
+        text = ai_text
+    else:
+        # Fallback: шаблонная генерация
+        import random
+
+        # Строка 1: Название + скидка
+        if deal.is_free:
+            lines.append(f"🎁 <b>{adult_prefix}{esc(deal.title)} — БЕСПЛАТНО</b>")
+        else:
+            lines.append(f"🔥 <b>{adult_prefix}{esc(deal.title)} — −{deal.discount}%</b>")
+
+        # Строка 2: Цена
+        if deal.is_free:
+            if old_price and old_price not in ("—", "Платная", ""):
+                lines.append(f"💰 Было: {esc(old_price)} → <b>БЕСПЛАТНО</b>")
+            else:
+                lines.append(f"💰 <b>БЕСПЛАТНО</b>")
+        else:
+            lines.append(f"💰 Было: {esc(old_price)} → <b>{esc(new_price)}</b>")
+
+        descriptions_top = [
+            "Культовая игра с отличными отзывами",
+            "Одна из лучших в своём жанре",
+            "Сильный сюжет и атмосфера",
+            "Высокий рейтинг и куча контента",
+            "100+ часов геймплея",
+        ]
+        descriptions_good = [
+            "Отличный вариант за свои деньги",
+            "Игроки очень хвалят геймплей",
+            "Качественная игра с хорошими отзывами",
+            "Затягивает с первых минут",
+            "Открытый мир и свобода действий",
+        ]
+        descriptions_ok = [
+            "Интересный вариант для фанатов жанра",
+            "Неплохая игра со смешанными отзывами",
+            "Может зайти, если нравится жанр",
+        ]
+
+        if score >= 6:
+            short_desc = random.choice(descriptions_top)
+        elif score >= 4:
+            short_desc = random.choice(descriptions_good)
+        else:
+            short_desc = random.choice(descriptions_ok)
+
+        if rating and rating['score'] >= 80:
+            short_desc += f" ({rating['score']}% положительных)"
+
+        lines.append(f"\n🎮 {esc(short_desc)}")
+
+        verdicts_top = [
+            "👉 <b>ЗА ТАКУЮ ЦЕНУ — ОБЯЗАТЕЛЬНО БРАТЬ</b>",
+            "👉 <b>ЭТО ПОДАРОК</b>",
+            "👉 <b>БРАТЬ НЕ ДУМАЯ</b>",
+        ]
+        if new_price_rub <= 100:
+            verdicts_top.append("👉 <b>ПОЧТИ БЕСПЛАТНО — БРАТЬ</b>")
+        elif new_price_rub <= 300:
+            verdicts_top.append("👉 <b>ДЕШЕВЛЕ ОБЕДА — БРАТЬ</b>")
+        if deal.discount >= 85:
+            verdicts_top.append("👉 <b>ЖИРНАЯ СКИДКА — НЕ УПУСТИ</b>")
+
+        verdicts_good = [
+            "👉 <b>СТОИТ ВЗЯТЬ</b>",
+            "👉 <b>Отличная цена</b>",
+            "👉 <b>Хорошая сделка</b>",
+        ]
+        verdicts_ok = [
+            "👉 Только если нравится жанр",
+            "👉 Проверь отзывы перед покупкой",
+        ]
+
+        if deal.is_free:
+            verdict = "👉 <b>Бесплатно — забирай не думая!</b>"
+        elif score >= 6:
+            verdict = random.choice(verdicts_top)
+        elif score >= 4:
+            verdict = random.choice(verdicts_good)
+        else:
+            verdict = random.choice(verdicts_ok)
+
+        lines.append(f"\n{verdict}")
+
+        # Автодожим
+        from config import TG_CHANNEL_LINK
+        closers = [
+            f"🔥 Больше таких скидок — <a href='{TG_CHANNEL_LINK}'>в канале</a>",
+            f"Подписывайся, чтобы не пропускать такие цены → <a href='{TG_CHANNEL_LINK}'>канал</a>",
+        ]
+        lines.append(f"\n{random.choice(closers)}")
+
+        text = "\n".join(lines)
 
     # ОТКЛЮЧЕНО: мини-игры ломают бота
     # Для платных игр — сохраняем цену и добавляем кнопку мини-игры
@@ -336,7 +355,7 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
     vote_row = [
         InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{_cb_id(deal.deal_id)}"),
         InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{_cb_id(deal.deal_id)}"),
-        InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"),
+        InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40].replace(':', '').replace('|', '')}"),
     ]
     rows = [
         [InlineKeyboardButton(text=f"🛒 Открыть в {deal.store}", url=_utm_link(deal.link, deal.store))],
@@ -378,10 +397,8 @@ async def publish_single(deal, prefetched_rating: Optional[dict] = None, is_prio
         # Steam CDN fallback по appid
         if deal.deal_id.startswith("steam_"):
             appid = deal.deal_id.replace("steam_", "")
-            photo = f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg"
-        else:
-            # Универсальный дефолт — нейтральная картинка-заглушка
-            photo = "https://store.steampowered.com/public/shared/images/header/globalheader_logo.png"
+            if appid.isdigit():
+                photo = f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg"
 
     try:
         if collage_bytes:

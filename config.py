@@ -10,11 +10,24 @@ TOP_DEALS_PER_POST = int(os.getenv("TOP_DEALS_PER_POST", "7"))
 
 # Времена публикации: "9:0,12:0,15:0,18:0,21:0"
 _post_times_raw = os.getenv("POST_TIMES", "9:0,12:0,15:0,18:0,21:0")
-POST_TIMES: list[tuple[int, int]] = [
-    (int(t.split(":")[0]), int(t.split(":")[1]))
-    for t in _post_times_raw.split(",")
-    if ":" in t
-]
+_POST_TIMES_DEFAULT = [(9, 0), (12, 0), (15, 0), (18, 0), (21, 0)]
+
+def _parse_post_times(raw: str) -> list[tuple[int, int]]:
+    result = []
+    for t in raw.split(","):
+        t = t.strip()
+        if ":" not in t:
+            continue
+        try:
+            h, m = t.split(":", 1)
+            h, m = int(h), int(m)
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                result.append((h, m))
+        except (ValueError, TypeError):
+            continue
+    return result or _POST_TIMES_DEFAULT
+
+POST_TIMES: list[tuple[int, int]] = _parse_post_times(_post_times_raw)
 
 DB_CLEANUP_DAYS = int(os.getenv("DB_CLEANUP_DAYS", "30"))
 DB_PATH = os.getenv("DB_PATH", "data/deals.db" if os.path.isdir("data") else "deals.db")
@@ -55,3 +68,9 @@ VK_ACCESS_TOKEN = os.getenv("VK_ACCESS_TOKEN", "")
 VK_GROUP_ID = int(os.getenv("VK_GROUP_ID", "0"))
 VK_ENABLED = os.getenv("VK_ENABLED", "false").lower() == "true"
 TG_CHANNEL_LINK = os.getenv("TG_CHANNEL_LINK", "https://t.me/GameDealsRadarRu")
+
+# AI генерация постов через Groq (бесплатно: console.groq.com)
+# Модель: llama-3.3-70b-versatile, 14 400 запросов/день без карты
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+# Минимальная скидка для публикации (рекомендуется 70 для качества канала)
+MIN_DISCOUNT_PUBLISH = int(os.getenv("MIN_DISCOUNT_PUBLISH", "50"))

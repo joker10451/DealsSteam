@@ -3,30 +3,32 @@
 Склеивает до 4 обложек горизонтально в один баннер.
 """
 import asyncio
-import aiohttp
 import io
+import logging
 from typing import Optional
 
+from parsers.utils import fetch_with_retry
+
+log = logging.getLogger(__name__)
+
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
     PILLOW_AVAILABLE = True
 except ImportError:
     PILLOW_AVAILABLE = False
 
 BANNER_WIDTH = 1280
 BANNER_HEIGHT = 400
-THUMB_W = BANNER_WIDTH // 4
-THUMB_H = BANNER_HEIGHT
 
 
-async def _download_image(session: aiohttp.ClientSession, url: str) -> Optional[bytes]:
+async def _download_image(url: str) -> Optional[bytes]:
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
-            if r.status == 200:
-                return await r.read()
+        data = await fetch_with_retry(url, as_json=False)
+        if isinstance(data, str):
+            return data.encode()
+        return data  # bytes or None
     except Exception:
-        pass
-    return None
+        return None
 
 
 def _fit_image(img: "Image.Image", w: int, h: int) -> "Image.Image":
@@ -53,9 +55,8 @@ async def make_collage(image_urls: list[str]) -> Optional[bytes]:
     if not urls:
         return None
 
-    # Скачиваем все картинки параллельно через одну сессию
-    async with aiohttp.ClientSession() as session:
-        raw_images = await asyncio.gather(*[_download_image(session, u) for u in urls])
+    # Скачиваем все картинки параллельно через глобальную сессию
+    raw_images = await asyncio.gather(*[_download_image(u) for u in urls])
 
     images = []
     for raw in raw_images:

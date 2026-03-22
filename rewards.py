@@ -189,11 +189,12 @@ async def purchase_reward(user_id: int, reward_id: str) -> dict:
                 )
 
         log.info(f"Пользователь {user_id} получил ключ {reward_id}")
+        new_balance_key = locked_balance - cost
         return {
             "success": True,
             "reward": reward,
             "cost": cost,
-            "new_balance": locked_balance - cost,
+            "new_balance": new_balance_key,
             "key_value": key_data["key_value"],
             "game_title": key_data["game_title"],
         }

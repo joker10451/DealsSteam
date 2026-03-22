@@ -53,8 +53,16 @@ async def _get_token() -> Optional[str]:
     if _token and time.time() < _token_expires - 60:
         return _token
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(TOKEN_URL, params={
+        # OAuth POST — fetch_with_retry поддерживает только GET, используем сессию напрямую
+        from parsers.utils import get_session
+        session = get_session()
+        _own = False
+        if session is None or session.closed:
+            import aiohttp as _aiohttp
+            session = _aiohttp.ClientSession()
+            _own = True
+        try:
+            async with session.post(TOKEN_URL, params={
                 "client_id": IGDB_CLIENT_ID,
                 "client_secret": IGDB_CLIENT_SECRET,
                 "grant_type": "client_credentials",
@@ -65,6 +73,9 @@ async def _get_token() -> Optional[str]:
                 _token = data.get("access_token")
                 _token_expires = time.time() + data.get("expires_in", 3600)
                 return _token
+        finally:
+            if _own:
+                await session.close()
     except Exception:
         return None
 
@@ -110,11 +121,25 @@ async def get_game_info(title: str) -> Optional[dict]:
     )
 
     try:
-        async with aiohttp.ClientSession(headers=headers) as s:
-            async with s.post(IGDB_URL, data=body, timeout=aiohttp.ClientTimeout(total=10)) as r:
+        from parsers.utils import get_session
+        session = get_session()
+        _own = False
+        if session is None or session.closed:
+            session = aiohttp.ClientSession(headers=headers)
+            _own = True
+        try:
+            async with session.post(
+                IGDB_URL,
+                data=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
                 if r.status != 200:
                     return None
                 results = await r.json()
+        finally:
+            if _own:
+                await session.close()
     except Exception:
         return None
 
@@ -122,17 +147,38 @@ async def get_game_info(title: str) -> Optional[dict]:
         return None
 
     game = results[0]
-    
-    # Проверяем схожесть названий (простая проверка)
+
+    # Стоп-слова, которые не считаются значимыми при сравнении
+    _STOPWORDS = {"the", "a", "an", "of", "in", "on", "at", "and", "or", "to", "is", "for"}
+
+    def _significant_words(s: str) -> set[str]:
+        import re
+        words = re.findall(r"[a-z0-9]+", s.lower())
+        return {w for w in words if w not in _STOPWORDS and len(w) > 1}
+
     game_name = game.get("name", "").lower()
     search_title = title.lower()
-    # Если названия слишком разные, возвращаем None
-    if game_name and search_title not in game_name and game_name not in search_title:
-        # Проверяем хотя бы частичное совпадение слов
-        search_words = set(search_title.split())
-        game_words = set(game_name.split())
-        common_words = search_words & game_words
-        if len(common_words) < 2:  # Меньше 2 общих слов - скорее всего не та игра
+
+    # Точное совпадение — всегда ОК
+    if game_name != search_title:
+        sig_search = _significant_words(search_title)
+        sig_game = _significant_words(game_name)
+
+        if not sig_search:
+            # Нечего сравнивать — пропускаем
+            return None
+
+        # Все значимые слова запроса должны присутствовать в названии найденной игры
+        # ИЛИ наоборот (для случаев "The Forest" → "Forest")
+        missing_in_game = sig_search - sig_game
+        missing_in_search = sig_game - sig_search
+
+        # Допускаем не более 1 лишнего слова с каждой стороны
+        if len(missing_in_game) > 1 or len(missing_in_search) > 1:
+            log.debug(
+                f"IGDB: отклонено '{game_name}' для запроса '{search_title}' "
+                f"(missing_in_game={missing_in_game}, missing_in_search={missing_in_search})"
+            )
             return None
 
     # Описание — первые 2 предложения, переводим на русский

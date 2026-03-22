@@ -193,7 +193,7 @@ async def _publish_top_day_post(deal, rating: Optional[dict], score: int) -> boo
     
     # Усиливаем если цена очень низкая
     try:
-        price_rub = float(str(deal.new_price).replace("₽", "").replace(" ", "").replace(",", "").strip())
+        price_rub = 0.0 if deal.is_free else float(str(deal.new_price).replace("₽", "").replace(" ", "").replace(",", "").strip())
         if price_rub <= 100:
             verdicts.append("👉 <b>ПОЧТИ БЕСПЛАТНО — БРАТЬ</b>")
         elif price_rub <= 300:
@@ -212,7 +212,7 @@ async def _publish_top_day_post(deal, rating: Optional[dict], score: int) -> boo
     vote_row = [
         InlineKeyboardButton(text="🔥 0", callback_data=f"vote:fire:{_cb_id(deal.deal_id)}"),
         InlineKeyboardButton(text="💩 0", callback_data=f"vote:poop:{_cb_id(deal.deal_id)}"),
-        InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40]}"),
+        InlineKeyboardButton(text="➕ Вишлист", callback_data=f"wl_add:{deal.title[:40].replace(':', '').replace('|', '')}"),
     ]
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -238,6 +238,11 @@ async def _publish_top_day_post(deal, rating: Optional[dict], score: int) -> boo
     
     if not photo and not collage_bytes:
         photo = deal.image_url
+    if not photo and not collage_bytes:
+        if deal.deal_id.startswith("steam_"):
+            appid = deal.deal_id.replace("steam_", "")
+            if appid.isdigit():
+                photo = f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg"
     
     try:
         from aiogram.types import BufferedInputFile
@@ -387,7 +392,7 @@ async def _check_and_post_impl() -> Optional[str]:
     
     # Сортируем платные по теме дня и скидке
     _, _, theme_genres = get_daily_theme()
-    paid.sort(key=lambda d: (theme_score(d, theme_genres), d.discount), reverse=True)
+    paid.sort(key=lambda d: (theme_score(d, theme_genres) * 100, d.discount), reverse=True)
 
     # ОТКЛЮЧЕНО: не спамим админа критическими ошибками цен
     # Алерт администратору о критических ошибках цен — возможность закупить ключи
@@ -460,11 +465,11 @@ async def post_weekly_digest():
         return
 
     now = datetime.now(MSK).strftime("%d.%m.%Y")
-    store_emoji = {"Steam": "🎮", "Epic Games": "🎁"}
+    store_emoji = {"Steam": "🎮", "Epic Games": "🎁", "GOG": "🔵"}
 
     lines = [f"📅 <b>ЛУЧШИЕ СКИДКИ НЕДЕЛИ — {now}</b>", "", "🏷 <b>Топ по скидке:</b>"]
     for i, row in enumerate(top_discount, 1):
-        emoji = store_emoji.get(row["store"], "🕹")
+        emoji = store_emoji.get(row["store"], "🎯")
         link = row.get("link") or ""
         if not link:
             if row["store"] == "Steam" and row["deal_id"].startswith("steam_"):
@@ -473,12 +478,12 @@ async def post_weekly_digest():
             elif row["store"] == "Epic Games" and row["deal_id"].startswith("epic_"):
                 link = "https://store.epicgames.com/ru/free-games"
         title_part = f"<a href='{link}'>{esc(row['title'])}</a>" if link else esc(row["title"])
-        lines.append(f"{i}. {emoji} {title_part} — <code>-{row['discount']}%</code> <i>({esc(row['store'])})</i>")
+        lines.append(f"{i}. {emoji} {title_part} — <b>−{row['discount']}%</b> <i>({esc(row['store'])})</i>")
 
     if top_voted:
         lines += ["", "🔥 <b>Топ по голосам подписчиков:</b>"]
         for i, row in enumerate(top_voted, 1):
-            emoji = store_emoji.get(row["store"], "🕹")
+            emoji = store_emoji.get(row["store"], "🎯")
             link = row.get("link") or ""
             if not link:
                 if row["store"] == "Steam" and row["deal_id"].startswith("steam_"):
@@ -487,7 +492,7 @@ async def post_weekly_digest():
             title_part = f"<a href='{link}'>{esc(row['title'])}</a>" if link else esc(row["title"])
             lines.append(f"{i}. {emoji} {title_part} — {row['fire_count']} 🔥")
 
-    lines += ["", "━" * 20, "👾 Следи за каналом — новые скидки каждый день!"]
+    lines += ["", "👾 Следи за каналом — новые скидки каждый день!"]
 
     from publisher import get_bot, send_with_retry
     try:
@@ -616,16 +621,23 @@ async def run_garbage_collect():
         await notify_admin(f"❌ <b>GC завершился с ошибкой:</b>\n{e}")
 
 
+# Хранит last_post_iso на момент последнего алерта — чтобы не спамить повторно
+_health_last_alerted_post: str | None = None
+
+
 async def check_bot_health():
     """
     Healthcheck: проверяет что последний пост был не позже MAX_SILENCE_HOURS назад.
-    Если бот «застрял» — шлёт алерт администратору.
+    Если бот «застрял» — шлёт алерт администратору ОДИН РАЗ на каждый инцидент.
+    Повторный алерт отправляется только если ситуация не изменилась через 6 часов.
     Запускается каждый час.
     """
+    global _health_last_alerted_post
     import server as _server
     from database import get_pool
 
-    MAX_SILENCE_HOURS = 3
+    MAX_SILENCE_HOURS = 6   # порог: 3 часа между постами + запас
+    REPEAT_ALERT_HOURS = 6  # повторный алерт не чаще чем раз в 6 часов
 
     last_post_iso = _server.last_post_time
 
@@ -658,6 +670,19 @@ async def check_bot_health():
         silence_hours = (now - last_dt).total_seconds() / 3600
 
         if silence_hours > MAX_SILENCE_HOURS:
+            # Проверяем: уже слали алерт об этом же инциденте?
+            already_alerted = _health_last_alerted_post == last_post_iso
+            if already_alerted:
+                # Слать повторно только если прошло REPEAT_ALERT_HOURS с момента последнего поста
+                repeat_threshold = MAX_SILENCE_HOURS + REPEAT_ALERT_HOURS
+                if silence_hours < repeat_threshold:
+                    log.warning(
+                        f"Healthcheck FAIL (повтор подавлен): молчание {silence_hours:.1f}ч, "
+                        f"повтор после {repeat_threshold:.0f}ч"
+                    )
+                    return
+
+            _health_last_alerted_post = last_post_iso
             last_str = last_dt.strftime("%d.%m.%Y %H:%M МСК")
             await notify_admin(
                 f"🚨 <b>Бот застрял!</b>\n\n"
@@ -667,6 +692,10 @@ async def check_bot_health():
             )
             log.warning(f"Healthcheck FAIL: молчание {silence_hours:.1f}ч > {MAX_SILENCE_HOURS}ч")
         else:
+            # Бот снова постит — сбрасываем флаг алерта
+            if _health_last_alerted_post is not None:
+                _health_last_alerted_post = None
+                log.info("Healthcheck: бот восстановился, флаг алерта сброшен")
             log.debug(f"Healthcheck OK: последний пост {silence_hours:.1f}ч назад")
 
     except Exception as e:

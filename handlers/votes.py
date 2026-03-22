@@ -36,7 +36,11 @@ async def handle_tip_useful(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("vote:"))
 async def handle_vote(callback: CallbackQuery):
-    _, vote_type, deal_id = callback.data.split(":", 2)
+    parts = callback.data.split(":", 2)
+    if len(parts) != 3:
+        await callback.answer("Ошибка данных", show_alert=False)
+        return
+    _, vote_type, deal_id = parts
     saved = await add_vote(deal_id, callback.from_user.id, vote_type)
 
     if not saved:
