@@ -235,3 +235,84 @@ async def pick_best_deal(candidates: list, rating_cache: dict | None = None) -> 
         log.warning(f"AI выбор сделки не удался: {e}")
 
     return 0
+
+
+async def generate_digest_header(top_deals: list[dict]) -> str | None:
+    """
+    Генерирует цепляющий заголовок для еженедельного дайджеста.
+
+    Args:
+        top_deals: список dict с ключами title, discount, store (топ скидок недели)
+
+    Returns:
+        Готовая первая строка дайджеста (HTML) или None если AI недоступен.
+    """
+    if not GROQ_API_KEY or not top_deals:
+        return None
+
+    # Компактный список топ-3 для контекста
+    highlights = []
+    for d in top_deals[:3]:
+        highlights.append(f"{d['title']} −{d['discount']}% ({d['store']})")
+    highlights_str = "\n".join(highlights)
+
+    prompt = f"""Напиши ОДНУ строку — цепляющий заголовок для еженедельного дайджеста скидок на игры в Telegram-канале.
+
+Топ скидок этой недели:
+{highlights_str}
+
+Требования:
+- Одна строка, максимум 80 символов
+- Без даты — дату добавим сами
+- Эмодзи в начале (одно)
+- Пиши на русском, живо и с характером
+- Не используй: "лучшие скидки", "топ недели", "дайджест"
+- Примеры стиля: "🔥 Эта неделя была жирной — смотри сам", "💥 Пока ты спал — Steam раздавал", "🎮 Неделя закончилась, скидки — нет"
+
+Ответь ТОЛЬКО одной строкой заголовка, без кавычек."""
+
+    try:
+        from parsers.utils import get_session
+        import aiohttp
+
+        session = get_session()
+        _own = False
+        if session is None or session.closed:
+            session = aiohttp.ClientSession()
+            _own = True
+
+        payload = {
+            "model": GROQ_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 60,
+            "temperature": 0.9,
+        }
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with session.post(
+                GROQ_URL,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    header = data["choices"][0]["message"]["content"].strip().strip('"').strip("'")
+                    log.info(f"AI заголовок дайджеста: {header}")
+                    return header
+                elif resp.status == 429:
+                    log.warning("Groq digest header: rate limit")
+                else:
+                    log.warning(f"Groq digest header: HTTP {resp.status}")
+        finally:
+            if _own:
+                await session.close()
+
+    except Exception as e:
+        log.warning(f"AI заголовок дайджеста не удался: {e}")
+
+    return None

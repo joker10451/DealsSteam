@@ -480,7 +480,12 @@ async def post_weekly_digest():
     now = datetime.now(MSK).strftime("%d.%m.%Y")
     store_emoji = {"Steam": "🎮", "Epic Games": "🎁", "GOG": "🔵"}
 
-    lines = [f"📅 <b>ЛУЧШИЕ СКИДКИ НЕДЕЛИ — {now}</b>", "", "🏷 <b>Топ по скидке:</b>"]
+    # AI генерирует цепляющий заголовок
+    from ai_writer import generate_digest_header
+    ai_header = await generate_digest_header(top_discount)
+    header_line = f"{ai_header} — {now}" if ai_header else f"📅 <b>ЛУЧШИЕ СКИДКИ НЕДЕЛИ — {now}</b>"
+
+    lines = [f"<b>{header_line}</b>", "", "🏷 <b>Топ по скидке:</b>"]
     for i, row in enumerate(top_discount, 1):
         emoji = store_emoji.get(row["store"], "🎯")
         link = row.get("link") or ""
