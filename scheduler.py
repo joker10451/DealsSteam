@@ -483,7 +483,7 @@ async def post_weekly_digest():
     # AI генерирует цепляющий заголовок
     from ai_writer import generate_digest_header
     ai_header = await generate_digest_header(top_discount)
-    header_line = f"{ai_header} — {now}" if ai_header else f"📅 <b>ЛУЧШИЕ СКИДКИ НЕДЕЛИ — {now}</b>"
+    header_line = f"{esc(ai_header)} — {now}" if ai_header else f"📅 ЛУЧШИЕ СКИДКИ НЕДЕЛИ — {now}"
 
     lines = [f"<b>{header_line}</b>", "", "🏷 <b>Топ по скидке:</b>"]
     for i, row in enumerate(top_discount, 1):
