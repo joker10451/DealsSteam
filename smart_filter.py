@@ -8,6 +8,21 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
+# Ключевые слова в названии — признак DLC, саундтрека, артбука, демо
+_NON_GAME_KEYWORDS = [
+    "soundtrack", "ost", "artbook", "art book", "dlc", "season pass",
+    "expansion", "upgrade", "pack", "bundle", "demo", "prologue",
+    "episode", "chapter", "content", "cosmetic", "skin", "costume",
+    "the infernal machine", "digital art", "digital extras",
+    "supporter pack", "deluxe upgrade", "pre-order bonus",
+]
+
+
+def _is_non_game(title: str) -> bool:
+    """Возвращает True если название похоже на DLC/саундтрек/артбук."""
+    t = title.lower()
+    return any(kw in t for kw in _NON_GAME_KEYWORDS)
+
 
 async def should_publish_deal(deal, rating: Optional[dict] = None, igdb_info: Optional[dict] = None) -> tuple[bool, str]:
     """
@@ -19,6 +34,11 @@ async def should_publish_deal(deal, rating: Optional[dict] = None, igdb_info: Op
     # Всегда публикуем бесплатные игры
     if deal.is_free:
         return True, "free_game"
+
+    # Фильтр DLC, саундтреков, артбуков
+    if _is_non_game(deal.title):
+        log.info(f"Отклонено (не игра — DLC/OST/артбук): {deal.title}")
+        return False, "non_game"
     
     # Всегда публикуем огромные скидки (90%+)
     if deal.discount >= 90:
