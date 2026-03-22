@@ -567,24 +567,41 @@ async def cmd_test_post(message: Message):
         )
 
         bot = get_bot()
-        photo = igdb_info.get("cover_url") if igdb_info else None
-        if not photo:
-            photo = deal.image_url
 
-        if photo:
-            await bot.send_photo(
-                message.from_user.id,
-                photo=photo,
-                caption=text,
-                reply_markup=keyboard,
-            )
+        # Логика фото — такая же как в publish_single
+        from collage import make_collage
+        from aiogram.types import BufferedInputFile
+
+        photo = None
+        collage_bytes = None
+
+        if igdb_info:
+            urls = []
+            if igdb_info.get("cover_url"):
+                urls.append(igdb_info["cover_url"])
+            urls.extend(igdb_info.get("screenshots", [])[:3])
+            if deal.image_url:
+                urls.append(deal.image_url)
+            if len(urls) >= 2:
+                collage_bytes = await make_collage(urls[:4])
+            if not collage_bytes and igdb_info.get("cover_url"):
+                photo = igdb_info["cover_url"]
+
+        if not photo and not collage_bytes:
+            photo = deal.image_url
+        if not photo and not collage_bytes:
+            if deal.deal_id.startswith("steam_"):
+                appid = deal.deal_id.replace("steam_", "")
+                if appid.isdigit():
+                    photo = f"https://cdn.akamai.steamstatic.com/steam/apps/{appid}/header.jpg"
+
+        if collage_bytes:
+            file = BufferedInputFile(collage_bytes, filename="collage.png")
+            await bot.send_photo(message.from_user.id, photo=file, caption=text, reply_markup=keyboard)
+        elif photo:
+            await bot.send_photo(message.from_user.id, photo=photo, caption=text, reply_markup=keyboard)
         else:
-            await bot.send_message(
-                message.from_user.id,
-                text,
-                reply_markup=keyboard,
-                disable_web_page_preview=True,
-            )
+            await bot.send_message(message.from_user.id, text, reply_markup=keyboard, disable_web_page_preview=True)
 
         await status_msg.edit_text("✅ Тестовый пост отправлен тебе в личку.\n\n<i>💡 В реальном посте под ним будет кнопка «🎲 Угадай цену»</i>")
 
