@@ -137,3 +137,101 @@ async def generate_post_text(
     except Exception as e:
         log.warning(f"Groq AI генерация не удалась: {e}")
         return None
+
+
+async def pick_best_deal(candidates: list, rating_cache: dict | None = None) -> int:
+    """
+    AI выбирает лучшую сделку из списка кандидатов для публикации.
+
+    Args:
+        candidates: список Deal объектов (уже отфильтрованных)
+        rating_cache: dict {deal_id: rating_dict} — предзагруженные рейтинги
+
+    Returns:
+        индекс лучшей сделки в списке (0 если AI недоступен или ошибка)
+    """
+    if not GROQ_API_KEY or not candidates:
+        return 0
+
+    if len(candidates) == 1:
+        return 0
+
+    rating_cache = rating_cache or {}
+
+    # Формируем компактный список для AI
+    lines = []
+    for i, deal in enumerate(candidates):
+        rating = rating_cache.get(deal.deal_id)
+        rating_str = f"{rating['score']}%" if rating else "?"
+        price_str = "БЕСПЛАТНО" if deal.is_free else f"{deal.new_price} (было {deal.old_price})"
+        genres_str = ", ".join((deal.genres or [])[:2]) or "?"
+        lines.append(
+            f"{i+1}. {deal.title} | -{deal.discount}% | {price_str} | "
+            f"рейтинг: {rating_str} | жанр: {genres_str} | магазин: {deal.store}"
+        )
+
+    deals_text = "\n".join(lines)
+
+    prompt = f"""Ты редактор Telegram-канала со скидками на игры. Выбери ОДНУ игру из списка, которая даст максимальный отклик у аудитории.
+
+Критерии (по важности):
+1. Известность игры — популярные игры дают больше реакций
+2. Размер скидки — чем больше, тем лучше
+3. Рейтинг — высокий рейтинг = доверие аудитории
+4. Цена — дешевле = больше покупок
+5. Жанр — action/rpg/indie популярнее нишевых
+
+Список игр:
+{deals_text}
+
+Ответь ТОЛЬКО цифрой — номером лучшей игры. Никакого текста, только цифра."""
+
+    try:
+        from parsers.utils import get_session
+        import aiohttp
+
+        session = get_session()
+        _own = False
+        if session is None or session.closed:
+            session = aiohttp.ClientSession()
+            _own = True
+
+        payload = {
+            "model": GROQ_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 5,
+            "temperature": 0.2,
+        }
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with session.post(
+                GROQ_URL,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    answer = data["choices"][0]["message"]["content"].strip()
+                    idx = int(answer) - 1
+                    if 0 <= idx < len(candidates):
+                        log.info(f"AI выбрал сделку #{idx+1}: {candidates[idx].title}")
+                        return idx
+                elif resp.status == 429:
+                    log.warning("Groq pick_best_deal: rate limit, используем fallback")
+                else:
+                    log.warning(f"Groq pick_best_deal: HTTP {resp.status}")
+        finally:
+            if _own:
+                await session.close()
+
+    except (ValueError, KeyError, IndexError) as e:
+        log.warning(f"AI выбор сделки: не удалось распарсить ответ: {e}")
+    except Exception as e:
+        log.warning(f"AI выбор сделки не удался: {e}")
+
+    return 0

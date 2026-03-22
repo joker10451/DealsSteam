@@ -420,7 +420,20 @@ async def _check_and_post_impl() -> Optional[str]:
     for d in combined[:5]:
         log.info(f"  → {d.title} | {d.store} | -{d.discount}% | {d.deal_id}")
 
-    for deal in combined[:5]:  # пробуем до 5 кандидатов
+    # AI выбирает лучшую сделку из топ-5 (glitch/free всегда идут первыми)
+    top5 = combined[:5]
+    # Glitch и бесплатные не трогаем — AI выбирает только среди платных если нет приоритетных
+    if not glitches and not free and len(top5) > 1:
+        try:
+            from ai_writer import pick_best_deal
+            best_idx = await pick_best_deal(top5, rating_cache=rating_cache)
+            # Ставим выбранную сделку первой
+            top5.insert(0, top5.pop(best_idx))
+            log.info(f"AI поставил первым: {top5[0].title}")
+        except Exception as e:
+            log.warning(f"AI выбор сделки не удался, используем сортировку по score: {e}")
+
+    for deal in top5:  # пробуем до 5 кандидатов
         is_priority = deal in glitches or deal.is_free
         ok, historical_low = await publish_single(
             deal,
