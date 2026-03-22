@@ -505,105 +505,45 @@ async def cmd_test_post(message: Message):
         from publisher import _calculate_deal_score
         deal_score = _calculate_deal_score(deal, rating, new_price_rub)
 
-        # НОВЫЙ ФОРМАТ ПОСТОВ
-        lines = []
         adult_prefix = "🔞 " if (igdb_info and igdb_info.get("is_adult")) else ""
-        
-        # Строка 1: Название + скидка
-        if deal.is_free:
-            lines.append(f"🎁 <b>{adult_prefix}{esc(deal.title)} — БЕСПЛАТНО</b>")
-        else:
-            lines.append(f"🔥 <b>{adult_prefix}{esc(deal.title)} — −{deal.discount}%</b>")
-        
-        # Строка 2: Цена
-        if deal.is_free:
-            if old_price and old_price not in ("—", "Платная", ""):
-                lines.append(f"💰 Было: {esc(old_price)} → <b>БЕСПЛАТНО</b>")
-            else:
-                lines.append(f"💰 <b>БЕСПЛАТНО</b>")
-        else:
-            lines.append(f"💰 Было: {esc(old_price)} → <b>{esc(new_price)}</b>")
-        
-        # УМНОЕ ОПИСАНИЕ (не из Steam, а из словаря)
-        import random
-        
-        descriptions_top = [
-            "Культовая игра с отличными отзывами",
-            "Одна из лучших в своём жанре",
-            "Сильный сюжет и атмосфера",
-            "Высокий рейтинг и куча контента",
-            "100+ часов геймплея",
-        ]
-        
-        descriptions_good = [
-            "Отличный вариант за свои деньги",
-            "Игроки очень хвалят геймплей",
-            "Качественная игра с хорошими отзывами",
-            "Затягивает с первых минут",
-            "Открытый мир и свобода действий",
-        ]
-        
-        descriptions_ok = [
-            "Интересный вариант для фанатов жанра",
-            "Неплохая игра со смешанными отзывами",
-            "Может зайти, если нравится жанр",
-        ]
-        
-        # Выбираем описание в зависимости от deal_score
-        if deal_score >= 6:
-            short_desc = random.choice(descriptions_top)
-        elif deal_score >= 4:
-            short_desc = random.choice(descriptions_good)
-        else:
-            short_desc = random.choice(descriptions_ok)
-        
-        # Добавляем рейтинг если есть
-        if rating and rating['score'] >= 80:
-            short_desc += f" ({rating['score']}% положительных)"
-        
-        lines.append(f"\n🎮 {esc(short_desc)}")
-        
-        # ВЕРДИКТ С ЭМОЦИЕЙ (зависит от deal_score)
-        verdicts_top = [
-            "👉 <b>ЗА ТАКУЮ ЦЕНУ — ОБЯЗАТЕЛЬНО БРАТЬ</b>",
-            "👉 <b>ЭТО ПОДАРОК</b>",
-            "👉 <b>БРАТЬ НЕ ДУМАЯ</b>",
-        ]
-        
-        # Усиливаем вердикт если цена очень низкая или скидка огромная
-        if new_price_rub <= 100:
-            verdicts_top.append("👉 <b>ПОЧТИ БЕСПЛАТНО — БРАТЬ</b>")
-        elif new_price_rub <= 300:
-            verdicts_top.append("👉 <b>ДЕШЕВЛЕ ОБЕДА — БРАТЬ</b>")
-        
-        if deal.discount >= 85:
-            verdicts_top.append("👉 <b>ЖИРНАЯ СКИДКА — НЕ УПУСТИ</b>")
-        
-        verdicts_good = [
-            "👉 <b>СТОИТ ВЗЯТЬ</b>",
-            "👉 <b>Отличная цена</b>",
-            "👉 <b>Хорошая сделка</b>",
-        ]
-        
-        verdicts_ok = [
-            "👉 Только если нравится жанр",
-            "👉 Проверь отзывы перед покупкой",
-        ]
-        
-        if deal.is_free:
-            verdict = "👉 <b>Бесплатно — забирай не думая!</b>"
-        elif deal_score >= 6:
-            verdict = random.choice(verdicts_top)
-        elif deal_score >= 4:
-            verdict = random.choice(verdicts_good)
-        else:
-            verdict = random.choice(verdicts_ok)
-        
-        lines.append(f"\n{verdict}")
 
-        lines.append(f"\n\n<i>🧪 Тестовый пост — в канал не отправлялся</i>")
-        lines.append(f"<i>📊 Score: {deal_score}/8 {'(ТОП)' if deal_score >= 6 else '(НОРМ)' if deal_score >= 4 else '(СЛАБО - не будет опубликовано)'}</i>")
-        text = "\n".join(lines)
+        # Пробуем AI-генерацию
+        from ai_writer import generate_post_text
+        await status_msg.edit_text("🤖 Генерирую текст через AI...")
+        ai_text = await generate_post_text(
+            title=deal.title,
+            old_price=str(deal.old_price),
+            new_price=str(deal.new_price),
+            discount=deal.discount,
+            is_free=deal.is_free,
+            rating_score=rating["score"] if rating else None,
+            genres=deal.genres or [],
+            igdb_description=igdb_info.get("description") if igdb_info else None,
+        )
+
+        if ai_text:
+            if adult_prefix:
+                ai_text = f"{adult_prefix}\n{ai_text}"
+            text = ai_text
+            ai_label = "✅ AI (Groq)"
+        else:
+            # Fallback шаблон
+            import random
+            lines = []
+            if deal.is_free:
+                lines.append(f"🎁 <b>{adult_prefix}{esc(deal.title)} — БЕСПЛАТНО</b>")
+            else:
+                lines.append(f"🔥 <b>{adult_prefix}{esc(deal.title)} — −{deal.discount}%</b>")
+            if deal.is_free:
+                lines.append(f"💰 <b>БЕСПЛАТНО</b>" if old_price in ("—", "Платная", "") else f"💰 Было: {esc(old_price)} → <b>БЕСПЛАТНО</b>")
+            else:
+                lines.append(f"💰 Было: {esc(old_price)} → <b>{esc(new_price)}</b>")
+            lines.append(f"\n🎮 Отличный вариант за свои деньги")
+            lines.append(f"\n👉 <b>СТОИТ ВЗЯТЬ</b>")
+            text = "\n".join(lines)
+            ai_label = "⚠️ Fallback (AI недоступен)"
+
+        text += f"\n\n<i>🧪 Тестовый пост — в канал не отправлялся</i>\n<i>📊 Score: {deal_score}/8 | {ai_label}</i>"
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
