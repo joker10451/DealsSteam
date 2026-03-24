@@ -155,11 +155,26 @@ async def is_already_posted(deal_id: str) -> bool:
 
 
 async def is_title_recently_posted(title: str, days: int = 14) -> bool:
-    """Проверяет публиковалась ли игра с таким названием за последние N дней."""
+    """Проверяет публиковалась ли игра с похожим названием за последние N дней.
+    Использует частичное совпадение чтобы ловить 'The Outlast Trials' vs 'Outlast Trials'.
+    """
     pool = await get_pool()
+    # Убираем артикли и лишние слова для более надёжного сравнения
+    clean = title.lower().strip()
+    for prefix in ("the ", "a ", "an "):
+        if clean.startswith(prefix):
+            clean = clean[len(prefix):]
+    # Проверяем точное совпадение (без артиклей) ИЛИ вхождение одного в другое
     row = await pool.fetchrow(
-        "SELECT 1 FROM posted_deals WHERE LOWER(title) = LOWER($1) AND posted_at > NOW() - INTERVAL '1 day' * $2",
-        title, days
+        """SELECT 1 FROM posted_deals
+           WHERE posted_at > NOW() - INTERVAL '1 day' * $2
+             AND (
+               LOWER(REGEXP_REPLACE(title, '^(the |a |an )', '', 'i')) = $1
+               OR LOWER(title) ILIKE '%' || $3 || '%'
+               OR $4 ILIKE '%' || LOWER(title) || '%'
+             )
+        """,
+        clean, days, clean, clean
     )
     return row is not None
 
