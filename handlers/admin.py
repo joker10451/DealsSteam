@@ -66,7 +66,9 @@ async def cmd_top_day(message: Message):
     try:
         game_title = await publish_top_of_day()
         if game_title:
-            await status_msg.edit_text(f"✅ ТОП дня опубликован:\n<b>{esc(game_title)}</b>")
+            await status_msg.edit_text(
+                f"✅ ТОП дня опубликован:\n<b>{esc(game_title)}</b>"
+            )
         else:
             await status_msg.edit_text("❌ Нет достойных игр для ТОП дня (score < 5)")
     except Exception as e:
@@ -74,9 +76,12 @@ async def cmd_top_day(message: Message):
         await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
     except Exception as e:
         import traceback
+
         tb = traceback.format_exc()
         log.error(f"Ошибка ручной публикации:\n{tb}")
-        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}\n\n<code>{esc(tb[-800:])}</code>")
+        await status_msg.edit_text(
+            f"❌ Ошибка: {esc(str(e))}\n\n<code>{esc(tb[-800:])}</code>"
+        )
 
 
 @router.message(Command("gems"))
@@ -117,7 +122,7 @@ async def cmd_collection(message: Message):
     if not _admin_only(message):
         await message.answer("⛔ Нет доступа.")
         return
-    
+
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await message.answer(
@@ -131,9 +136,9 @@ async def cmd_collection(message: Message):
             "• short_games — Короткие игры"
         )
         return
-    
+
     from themed_collections import post_themed_collection
-    
+
     theme = args[1].strip()
     status_msg = await message.answer(f"🔄 Формирую подборку '{theme}'...")
     try:
@@ -144,6 +149,74 @@ async def cmd_collection(message: Message):
             await status_msg.edit_text("⚠️ Нет игр для этой подборки.")
     except Exception as e:
         log.error(f"Ошибка публикации подборки: {e}")
+        await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
+
+
+@router.message(Command("news"))
+async def cmd_news(message: Message):
+    """Опубликовать новость (только админ)."""
+    if not _admin_only(message):
+        await message.answer("⛔ Нет доступа.")
+        return
+
+    args = message.text.split(maxsplit=4)
+
+    if len(args) < 3:
+        await message.answer(
+            "<b>📰 Публикация новости</b>\n\n"
+            "Формат:\n"
+            "<code>/news Заголовок | Вступление | Пункт1 | Пункт2 | Пункт3</code>\n\n"
+            "Разделитель: <code>|</code>\n\n"
+            "Пример:\n"
+            "<code>/news Студия анонсировала RPG | Новый проект от авторов... | Открытый мир | Кооп на 4 | Ранний доступ</code>\n\n"
+            "Максимум 6 пунктов.\n"
+            "Добавь <code>test</code> в конце для проверки в личку."
+        )
+        return
+
+    is_test = args[-1].strip().lower() == "test"
+
+    if is_test:
+        args = args[:-1]
+
+    title = args[1].strip()
+    parts = args[2].split("|") if len(args) > 2 else []
+
+    if len(parts) < 1:
+        await message.answer("❌ Нуж хотя бы 1 пункт.")
+        return
+
+    intro = parts[0].strip() if parts else ""
+    features = [p.strip() for p in parts[1:]] if len(parts) > 1 else []
+
+    if not features and len(args) > 3:
+        additional = args[3].split("|")
+        features = [p.strip() for p in additional if p.strip()]
+
+    from news import publish_news
+    from config import ADMIN_ID
+
+    target_id = ADMIN_ID if is_test else None
+
+    status_msg = await message.answer("🔄 Публикую новость...")
+    try:
+        success = await publish_news(
+            title=title,
+            intro=intro if intro else "",
+            features=features if features else [intro],
+            target_chat_id=target_id,
+        )
+        if success:
+            if is_test:
+                await status_msg.edit_text(
+                    "✅ Тестовая новость отправлена тебе в личку!"
+                )
+            else:
+                await status_msg.edit_text("✅ Новость опубликована в канал!")
+        else:
+            await status_msg.edit_text("❌ Ошибка публикации.")
+    except Exception as e:
+        log.error(f"Ошибка /news: {e}")
         await status_msg.edit_text(f"❌ Ошибка: {esc(str(e))}")
 
 
@@ -158,14 +231,14 @@ async def cmd_stats(message: Message):
     top = await get_engagement_top(days=7, limit=5)
 
     labels = {
-        "published":              "📢 Публикаций",
-        "publish_error":          "❌ Ошибок публикации",
-        "wishlist_notify":        "🔔 Уведомлений вишлиста",
-        "wishlist_notify_flushed":"🔔 Отложенных уведомлений",
-        "genre_notify":           "🎯 Уведомлений по жанру",
-        "vote_fire":              "🔥 Голосов огонь",
-        "vote_poop":              "💩 Голосов мимо",
-        "free_game_notify":       "🎁 Уведомлений о бесплатных",
+        "published": "📢 Публикаций",
+        "publish_error": "❌ Ошибок публикации",
+        "wishlist_notify": "🔔 Уведомлений вишлиста",
+        "wishlist_notify_flushed": "🔔 Отложенных уведомлений",
+        "genre_notify": "🎯 Уведомлений по жанру",
+        "vote_fire": "🔥 Голосов огонь",
+        "vote_poop": "💩 Голосов мимо",
+        "free_game_notify": "🎁 Уведомлений о бесплатных",
     }
 
     lines = ["📊 <b>Метрики за 7 дней</b>\n"]
@@ -177,8 +250,12 @@ async def cmd_stats(message: Message):
     if summary and summary.get("total_impressions"):
         lines.append("\n📈 <b>Вовлечённость постов</b>\n")
         lines.append(f"👁 Показов: <b>{summary['total_impressions']}</b>")
-        lines.append(f"🔥 Огонь: <b>{summary['total_fire']}</b>  💩 Мимо: <b>{summary['total_poop']}</b>")
-        lines.append(f"➕ В вишлист: <b>{summary['total_wl_adds']}</b>  🛒 Кликов: <b>{summary['total_clicks']}</b>")
+        lines.append(
+            f"🔥 Огонь: <b>{summary['total_fire']}</b>  💩 Мимо: <b>{summary['total_poop']}</b>"
+        )
+        lines.append(
+            f"➕ В вишлист: <b>{summary['total_wl_adds']}</b>  🛒 Кликов: <b>{summary['total_clicks']}</b>"
+        )
         lines.append(f"📌 CTR вишлиста: <b>{summary['avg_wl_ctr']}%</b>")
 
     # Топ-5 по вовлечённости
@@ -188,7 +265,11 @@ async def cmd_stats(message: Message):
         for i, r in enumerate(top, 1):
             emoji = store_emoji.get(r["store"], "🕹")
             ctr = r["wl_ctr"]
-            ctr_flag = " 🔴" if ctr == 0 and r["impressions"] >= 5 else (" 🟢" if ctr >= 5 else "")
+            ctr_flag = (
+                " 🔴"
+                if ctr == 0 and r["impressions"] >= 5
+                else (" 🟢" if ctr >= 5 else "")
+            )
             lines.append(
                 f"{i}. {emoji} <b>{esc(r['title'][:35])}</b> −{r['discount']}%\n"
                 f"   👁{r['impressions']} 🔥{r['fire_votes']} 💩{r['poop_votes']} "
@@ -239,6 +320,7 @@ async def cmd_give_key(message: Message):
 
         # Отмечаем приз как выданный
         from database import mark_reward_claimed
+
         await mark_reward_claimed(user_id, "steam_key_")
 
         await message.answer(f"✅ Ключ отправлен пользователю {user_id}")
@@ -449,7 +531,9 @@ async def cmd_test_post(message: Message):
 
         await status_msg.edit_text(f"🤖 Генерирую пост для <b>{esc(deal.title)}</b>...")
 
-        ok, _ = await publish_single(deal, is_priority=True, target_chat_id=message.from_user.id)
+        ok, _ = await publish_single(
+            deal, is_priority=True, target_chat_id=message.from_user.id
+        )
 
         if ok:
             await status_msg.edit_text(
@@ -525,6 +609,7 @@ async def cmd_reward_stats(message: Message):
 
     await message.answer("\n".join(lines))
 
+
 @router.message(Command("announce_referral"))
 async def cmd_announce_referral(message: Message):
     """Разослать анонс реферальной программы всем пользователям (только админ)."""
@@ -536,6 +621,7 @@ async def cmd_announce_referral(message: Message):
     await message.answer("📢 Начинаю рассылку... Это может занять несколько минут.")
 
     from referral import broadcast_referral_announcement
+
     result = await broadcast_referral_announcement(bot_info.username)
 
     if "error" in result:
@@ -607,21 +693,28 @@ async def cmd_channel_stat(message: Message):
     pool = await get_pool()
 
     total_users = await pool.fetchval("SELECT COUNT(*) FROM user_scores") or 0
-    active_7d = await pool.fetchval("""
+    active_7d = (
+        await pool.fetchval("""
         SELECT COUNT(DISTINCT user_id) FROM user_score_history
         WHERE recorded_at >= NOW() - INTERVAL '7 days'
-    """) or 0
-    active_30d = await pool.fetchval("""
+    """)
+        or 0
+    )
+    active_30d = (
+        await pool.fetchval("""
         SELECT COUNT(DISTINCT user_id) FROM user_score_history
         WHERE recorded_at >= NOW() - INTERVAL '30 days'
-    """) or 0
-    wishlist_users = await pool.fetchval(
-        "SELECT COUNT(DISTINCT user_id) FROM wishlist"
-    ) or 0
+    """)
+        or 0
+    )
+    wishlist_users = (
+        await pool.fetchval("SELECT COUNT(DISTINCT user_id) FROM wishlist") or 0
+    )
     total_wishlist = await pool.fetchval("SELECT COUNT(*) FROM wishlist") or 0
-    giveaway_participants = await pool.fetchval(
-        "SELECT COUNT(DISTINCT user_id) FROM giveaway_participants"
-    ) or 0
+    giveaway_participants = (
+        await pool.fetchval("SELECT COUNT(DISTINCT user_id) FROM giveaway_participants")
+        or 0
+    )
     referrals_total = await pool.fetchval("SELECT COUNT(*) FROM referrals") or 0
     top_score = await pool.fetchrow(
         "SELECT user_id, total_score FROM user_scores ORDER BY total_score DESC LIMIT 1"
@@ -645,7 +738,9 @@ async def cmd_channel_stat(message: Message):
             name = f"@{user.username}" if user.username else esc(user.first_name)
         except Exception:
             name = str(top_score["user_id"])
-        lines.append(f"\n🏆 Топ игрок: {name} — <b>{top_score['total_score']} баллов</b>")
+        lines.append(
+            f"\n🏆 Топ игрок: {name} — <b>{top_score['total_score']} баллов</b>"
+        )
 
     await message.answer("\n".join(lines))
 
@@ -658,6 +753,7 @@ async def cmd_tip(message: Message):
         return
     await message.answer("📤 Публикую совет дня...")
     from tips import post_tip_of_the_week
+
     await post_tip_of_the_week()
     await message.answer("✅ Совет опубликован.")
 
@@ -670,6 +766,7 @@ async def cmd_coop(message: Message):
         return
     await message.answer("📤 Ищу кооп-игры...")
     from scheduler import post_coop_digest
+
     await post_coop_digest()
     await message.answer("✅ Готово.")
 
@@ -700,7 +797,9 @@ async def cmd_test_game(message: Message):
     )
 
     if not row:
-        await status_msg.edit_text("❌ Нет опубликованных сделок в БД. Сначала опубликуй хоть один пост.")
+        await status_msg.edit_text(
+            "❌ Нет опубликованных сделок в БД. Сначала опубликуй хоть один пост."
+        )
         return
 
     # Создаём фиктивный Deal для игр
@@ -735,7 +834,7 @@ async def cmd_test_game(message: Message):
         InlineKeyboardButton(text=f"{p}₽", callback_data=f"pg:{deal.deal_id}:{p}")
         for p in options
     ]
-    rows_kb = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
+    rows_kb = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
 
     price_text = (
         f"🎲 <b>Игра 1: Угадай цену!</b>\n\n"
@@ -745,10 +844,13 @@ async def cmd_test_game(message: Message):
         f"<i>🧪 Тест — правильный ответ: {correct}₽</i>"
     )
 
-    await send_with_retry(lambda: bot.send_message(
-        user_id, price_text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows_kb),
-    ))
+    await send_with_retry(
+        lambda: bot.send_message(
+            user_id,
+            price_text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows_kb),
+        )
+    )
 
     # --- Игра 2: Угадай игру по скриншоту ---
     game_data = await create_screenshot_game(deal)
@@ -756,23 +858,24 @@ async def cmd_test_game(message: Message):
     if game_data:
         screenshot_buttons = [
             InlineKeyboardButton(
-                text=opt,
-                callback_data=f"sg:{game_data['game_id']}:{opt[:30]}"
+                text=opt, callback_data=f"sg:{game_data['game_id']}:{opt[:30]}"
             )
             for opt in game_data["options"]
         ]
         screenshot_rows = [[btn] for btn in screenshot_buttons]
 
-        await send_with_retry(lambda: bot.send_photo(
-            user_id,
-            photo=game_data["screenshot_url"],
-            caption=(
-                f"🖼 <b>Игра 2: Угадай игру по скриншоту!</b>\n\n"
-                f"Какая это игра? 👇\n\n"
-                f"<i>🧪 Тест — правильный ответ: {esc(game_data['correct_title'])}</i>"
-            ),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=screenshot_rows),
-        ))
+        await send_with_retry(
+            lambda: bot.send_photo(
+                user_id,
+                photo=game_data["screenshot_url"],
+                caption=(
+                    f"🖼 <b>Игра 2: Угадай игру по скриншоту!</b>\n\n"
+                    f"Какая это игра? 👇\n\n"
+                    f"<i>🧪 Тест — правильный ответ: {esc(game_data['correct_title'])}</i>"
+                ),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=screenshot_rows),
+            )
+        )
         await status_msg.edit_text("✅ Обе игры отправлены тебе в личку!")
     else:
         await status_msg.edit_text(
@@ -806,6 +909,7 @@ async def cmd_kick_giveaway(message: Message):
     except ValueError:
         # Username — ищем среди ВСЕХ участников (включая is_eligible=FALSE)
         from database import get_pool as _get_pool
+
         _pool = await _get_pool()
         all_participants = await _pool.fetch(
             "SELECT user_id FROM giveaway_participants WHERE giveaway_id = $1",
@@ -828,17 +932,23 @@ async def cmd_kick_giveaway(message: Message):
             return
 
     from database import get_pool
+
     pool = await get_pool()
     result = await pool.execute(
         "DELETE FROM giveaway_participants WHERE giveaway_id = $1 AND user_id = $2",
-        giveaway_id, user_id
+        giveaway_id,
+        user_id,
     )
     # result вида "DELETE N"
     deleted = int(result.split()[-1]) if result else 0
     if deleted:
-        await message.answer(f"✅ Пользователь {user_id} удалён из розыгрыша <code>{esc(giveaway_id)}</code>")
+        await message.answer(
+            f"✅ Пользователь {user_id} удалён из розыгрыша <code>{esc(giveaway_id)}</code>"
+        )
     else:
-        await message.answer(f"⚠️ Пользователь {user_id} не найден в розыгрыше <code>{esc(giveaway_id)}</code>")
+        await message.answer(
+            f"⚠️ Пользователь {user_id} не найден в розыгрыше <code>{esc(giveaway_id)}</code>"
+        )
 
 
 @router.message(Command("cleantestgiveaways"))
@@ -867,8 +977,8 @@ async def cmd_clean_test_giveaways(message: Message):
             deleted.append(row["title"])
 
     await message.answer(
-        f"✅ Удалено {len(deleted)} тестовых розыгрышей:\n" +
-        "\n".join(f"• {esc(t)}" for t in deleted)
+        f"✅ Удалено {len(deleted)} тестовых розыгрышей:\n"
+        + "\n".join(f"• {esc(t)}" for t in deleted)
     )
 
 
@@ -889,11 +999,15 @@ async def cmd_vk_giveaway(message: Message):
 
     giveaways = await get_active_giveaways()
     if not giveaways:
-        await message.answer("❌ Нет активных розыгрышей. Создай через /creategiveaway.")
+        await message.answer(
+            "❌ Нет активных розыгрышей. Создай через /creategiveaway."
+        )
         return
 
     # Если несколько — показываем список, берём с channel_post_id в приоритете
-    real = [g for g in giveaways if g.get("channel_post_id") and g["title"] != "Test Game"]
+    real = [
+        g for g in giveaways if g.get("channel_post_id") and g["title"] != "Test Game"
+    ]
     g = real[0] if real else giveaways[0]
 
     MSK = pytz.timezone("Europe/Moscow")
@@ -906,8 +1020,9 @@ async def cmd_vk_giveaway(message: Message):
     participants = g.get("participants_count", 0)
     desc = g.get("description") or ""
     description = (
-        f"{desc}\n\n" if desc else ""
-    ) + f"👥 Уже участвуют: {participants} чел.\n🎲 Больше друзей = больше шансов на победу!"
+        (f"{desc}\n\n" if desc else "")
+        + f"👥 Уже участвуют: {participants} чел.\n🎲 Больше друзей = больше шансов на победу!"
+    )
 
     channel_post_id = g.get("channel_post_id")
 
@@ -924,7 +1039,11 @@ async def cmd_vk_giveaway(message: Message):
     )
 
     if ok:
-        tg_link = f"https://t.me/GameDealsRadarRu/{channel_post_id}" if channel_post_id else "https://t.me/GameDealsRadarRu"
+        tg_link = (
+            f"https://t.me/GameDealsRadarRu/{channel_post_id}"
+            if channel_post_id
+            else "https://t.me/GameDealsRadarRu"
+        )
         await status_msg.edit_text(
             f"✅ Опубликовано в ВК!\n\n"
             f"🎮 {esc(g['title'])}\n"
@@ -973,7 +1092,9 @@ async def cmd_test_vk(message: Message):
     good = [d for d in deals if d.discount >= 50] or deals
     deal = random.choice(good)
 
-    await status_msg.edit_text(f"🔄 Нашёл: {esc(deal.title)} −{deal.discount}%\nЗагружаю данные...")
+    await status_msg.edit_text(
+        f"🔄 Нашёл: {esc(deal.title)} −{deal.discount}%\nЗагружаю данные..."
+    )
 
     rating = igdb_info = None
     try:
